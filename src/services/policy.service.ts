@@ -1,6 +1,8 @@
 import type { Change, ReleasePolicyRecommendation } from '../types/change';
 
-export type DeploymentDecision = 'PROMOTE' | 'PAUSE';
+export type DeploymentDecision =
+    | 'PROMOTE'
+    | 'PAUSE';
 
 export interface TelemetryInput {
     deploymentId: string;
@@ -12,11 +14,27 @@ export interface TelemetryInput {
 
 export interface PolicyDecision {
     deploymentId: string;
+
+    // Decision consumed by Deployment Controller
     decision: DeploymentDecision;
+
+    // Human-readable explanation
     reason: string;
+
+    // Exact signals that caused PAUSE
     failedSignals: string[];
+
+    // Telemetry evaluated by the Policy Engine
     telemetry: TelemetryInput;
+
+    // Policy that was evaluated
     policy: ReleasePolicyRecommendation;
+
+    // Whether the deployment is safe to continue
+    canPromote: boolean;
+
+    // Current canary stage allowed by policy
+    allowedStages: number[];
 }
 
 class PolicyService {
@@ -126,14 +144,23 @@ class PolicyService {
 
         return {
             deploymentId: telemetry.deploymentId,
+
             decision,
+
             reason:
                 decision === 'PAUSE'
                     ? 'One or more deployment safety thresholds were violated.'
                     : 'All deployment safety thresholds are within acceptable limits.',
+
             failedSignals,
+
             telemetry,
+
             policy,
+
+            canPromote: decision === 'PROMOTE',
+
+            allowedStages: policy.stages,
         };
     }
 

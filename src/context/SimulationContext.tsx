@@ -282,7 +282,7 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
         ...prev,
       ]);
     }
-  };
+  }; 
 
   const rollbackDeployment = async (deploymentId: string, reason: string = 'Error rate exceeded production threshold') => {
     const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });

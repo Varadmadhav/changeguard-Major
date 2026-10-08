@@ -7,8 +7,9 @@ import type {
 import { mockChanges } from '../data/mockChanges';
 import { riskService } from './risk.service';
 
-import {
-  policyService,
+import { policyService } from './policy.service';
+
+import type {
   TelemetryInput,
   PolicyDecision,
 } from './policy.service';
