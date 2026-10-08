@@ -1,37 +1,124 @@
-import { Change, ChangeStatus } from '../types/change';
+import type {
+  Change,
+  ChangeStatus,
+  ReleasePolicyRecommendation,
+} from '../types/change';
+
 import { mockChanges } from '../data/mockChanges';
+import { riskService } from './risk.service';
+
+import {
+  policyService,
+  TelemetryInput,
+  PolicyDecision,
+} from './policy.service';
 
 class ChangesService {
   private changes: Change[] = [...mockChanges];
 
   async getChanges(): Promise<Change[]> {
-    // Simulates GET /api/changes
     return Promise.resolve([...this.changes]);
   }
 
-  async getChangeById(id: string): Promise<Change | undefined> {
-    // Simulates GET /api/changes/:id
-    const found = this.changes.find(c => c.id === id || c.id === `pr-${id}` || c.number === Number(id));
+  async getChangeById(
+    id: string
+  ): Promise<Change | undefined> {
+    const found = this.changes.find(
+      c =>
+        c.id === id ||
+        c.id === `pr-${id}` ||
+        c.number === Number(id)
+    );
+
     return Promise.resolve(found);
   }
 
-  async updateChangeStatus(id: string, status: ChangeStatus): Promise<Change | undefined> {
-    // Simulates PATCH /api/changes/:id/status
-    const index = this.changes.findIndex(c => c.id === id || c.id === `pr-${id}` || c.number === Number(id));
+  async updateChangeStatus(
+    id: string,
+    status: ChangeStatus
+  ): Promise<Change | undefined> {
+    const index = this.changes.findIndex(
+      c =>
+        c.id === id ||
+        c.id === `pr-${id}` ||
+        c.number === Number(id)
+    );
+
     if (index !== -1) {
       this.changes[index] = {
         ...this.changes[index],
         status,
         updatedAt: 'Just now',
       };
+
       return Promise.resolve(this.changes[index]);
     }
+
     return Promise.resolve(undefined);
   }
 
-  async analyzeChange(prNumber: number): Promise<Change | undefined> {
-    // Simulates POST /api/changes/analyze
-    return this.getChangeById(String(prNumber));
+  async analyzeChange(
+    prNumber: number
+  ): Promise<Change | undefined> {
+    const change = await this.getChangeById(
+      String(prNumber)
+    );
+
+    if (!change) {
+      return undefined;
+    }
+
+    const risk = riskService.analyze(change);
+
+    const updatedChange: Change = {
+      ...change,
+
+      risk: {
+        ...change.risk,
+        score: risk.score,
+        level: risk.level,
+        confidence: risk.confidence,
+        summary: risk.summary,
+        reasons: risk.reasons,
+        factors: risk.factors,
+      },
+    };
+
+    return updatedChange;
+  }
+
+  async generatePolicy(
+    prNumber: number
+  ): Promise<ReleasePolicyRecommendation | undefined> {
+    const change = await this.getChangeById(
+      String(prNumber)
+    );
+
+    if (!change) {
+      return undefined;
+    }
+
+    return policyService.generatePolicy(change);
+  }
+
+  async evaluateDeploymentTelemetry(
+    prNumber: number,
+    telemetry: TelemetryInput
+  ): Promise<PolicyDecision | undefined> {
+    const change = await this.getChangeById(
+      String(prNumber)
+    );
+
+    if (!change) {
+      return undefined;
+    }
+
+    const policy = policyService.generatePolicy(change);
+
+    return policyService.evaluateTelemetry(
+      telemetry,
+      policy
+    );
   }
 }
 
