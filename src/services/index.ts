@@ -6,3 +6,5 @@ export * from './policies.service';
 export * from './analytics.service';
 export * from './integrations.service';
 export * from './audit.service';
+export * from './apiClient';
+export * from './auth.service';
