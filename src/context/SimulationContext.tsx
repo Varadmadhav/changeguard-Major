@@ -178,7 +178,7 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
       actor: { name: 'Policy Engine', type: 'POLICY_ENGINE' },
       action: 'DEPLOYMENT_PAUSED',
       actionTitle: 'Autonomous Rollout Pause Triggered',
-      resource: { type: 'DEPLOYMENT', id: deploymentId, name: 'checkout-service (v2.8.4)' },
+      resource: { type: 'DEPLOYMENT', id: deploymentId, name: 'checkout-service (v2.9.0)' },
       result: 'WARNING',
       source: 'POLICY_ENGINE',
       details: 'Error rate jump (0.42% → 3.7%) breached Policy Rule #3 (< 1.0%). Progression paused.',
@@ -218,6 +218,7 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
 
           return {
             ...dep,
+            version: dep.previousVersion,
             status: 'ROLLED_BACK',
             health: 'HEALTHY',
             currentTrafficPercentage: 0,
@@ -253,7 +254,7 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
       actor: { name: 'Alex Morgan', type: 'USER', email: 'alex.morgan@acme.com' },
       action: 'ROLLBACK_EXECUTED',
       actionTitle: 'Operator Triggered Rollback',
-      resource: { type: 'DEPLOYMENT', id: deploymentId, name: 'checkout-service (v2.8.4 → v2.8.3)' },
+      resource: { type: 'DEPLOYMENT', id: deploymentId, name: 'checkout-service (v2.9.0 → v2.8.3)' },
       result: 'SUCCESS',
       source: 'WEB_CONSOLE',
       details: `Operator initiated rollback. Reason: ${reason}. Restored baseline traffic in 14s.`,

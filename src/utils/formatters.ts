@@ -54,6 +54,12 @@ export function formatDeploymentStatus(status: string): {
   dotClass: string;
 } {
   switch (status) {
+    case 'PENDING':
+      return {
+        label: 'Pending Rollout',
+        badgeClass: 'bg-amber-50 text-amber-800 border-amber-200',
+        dotClass: 'bg-amber-500',
+      };
     case 'MONITORING':
       return {
         label: 'Monitoring Telemetry',

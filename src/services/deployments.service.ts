@@ -1,57 +1,111 @@
-import { Deployment } from '../types/deployment';
-import { mockDeployments } from '../data/mockDeployments';
+import type {
+  Deployment,
+  DeploymentStatus,
+  DeploymentPolicyCommand,
+} from '../types/deployment.ts';
+import {
+  validateDeploymentTransition,
+  InvalidStateTransitionError,
+  UnknownDeploymentError,
+} from '../types/deployment.ts';
+import { mockDeployments } from '../data/mockDeployments.ts';
+import { canaryController } from './canary.controller.ts';
+import { policyReceiver } from './policy.receiver.ts';
+import { deploymentRepository } from './deployment.repository.ts';
+import { deploymentAuditAdapter } from './audit.adapter.ts';
 
 class DeploymentsService {
-  private deployments: Deployment[] = [...mockDeployments];
+  private mode: 'local' | 'api' = 'local';
+  private apiBaseUrl = '/api';
+
+  public getMode(): 'local' | 'api' {
+    return this.mode;
+  }
+
+  public setMode(mode: 'local' | 'api', baseUrl?: string): void {
+    this.mode = mode;
+    if (baseUrl) this.apiBaseUrl = baseUrl;
+  }
 
   async getDeployments(): Promise<Deployment[]> {
-    // Simulates GET /api/deployments
-    return Promise.resolve([...this.deployments]);
+    if (this.mode === 'api' && typeof fetch !== 'undefined') {
+      try {
+        const res = await fetch(`${this.apiBaseUrl}/deployments`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && Array.isArray(json.data)) return json.data;
+        }
+      } catch {
+        // Fall back to local repository
+      }
+    }
+    return deploymentRepository.findAll();
   }
 
   async getDeploymentById(id: string): Promise<Deployment | undefined> {
-    // Simulates GET /api/deployments/:id
-    return Promise.resolve(
-      this.deployments.find(d => d.id === id || d.serviceId === id || d.serviceName.toLowerCase().includes(id.toLowerCase()))
-    );
+    if (this.mode === 'api' && typeof fetch !== 'undefined') {
+      try {
+        const res = await fetch(`${this.apiBaseUrl}/deployments/${id}`);
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && json.data) return json.data;
+        }
+      } catch {
+        // Fall back to local repository
+      }
+    }
+    const found = await deploymentRepository.findById(id);
+    return found || undefined;
   }
 
-  async promoteDeployment(id: string): Promise<Deployment | undefined> {
-    // Simulates POST /api/deployments/:id/promote
-    const dep = this.deployments.find(d => d.id === id);
+  async promoteDeployment(id: string, targetStage?: number): Promise<Deployment | undefined> {
+    if (this.mode === 'api' && typeof fetch !== 'undefined') {
+      try {
+        const res = await fetch(`${this.apiBaseUrl}/deployments/${id}/promote`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetStage }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && json.data) return json.data;
+        }
+      } catch {
+        // Fall back to local execution
+      }
+    }
+
+    const dep = await deploymentRepository.findById(id);
     if (!dep) return undefined;
 
-    const nextStages = dep.stages;
-    const nextIdx = Math.min(dep.currentStageIndex + 1, nextStages.length - 1);
-    const targetTraffic = nextStages[nextIdx];
-    const isFull = targetTraffic === 100;
+    canaryController.promote(dep, targetStage);
+    const saved = await deploymentRepository.save(dep);
+    await deploymentAuditAdapter.recordPromotion(saved, saved.currentTrafficPercentage);
 
-    dep.currentTrafficPercentage = targetTraffic;
-    dep.targetTrafficPercentage = targetTraffic;
-    dep.currentStageIndex = nextIdx;
-    dep.status = isFull ? 'PROMOTED' : 'MONITORING';
-    dep.health = 'HEALTHY';
-    dep.updatedAt = 'Just now';
-
-    dep.timeline.unshift({
-      id: `tl-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      title: isFull ? 'Deployment 100% Promoted' : `Traffic Promoted to ${targetTraffic}%`,
-      description: isFull
-        ? 'Rollout reached full production traffic. All verification gates passed.'
-        : `Advanced canary traffic to stage ${nextIdx + 1} (${targetTraffic}%).`,
-      type: 'SUCCESS',
-      actor: 'Alex Morgan (Operator)',
-    });
-
-    return Promise.resolve({ ...dep });
+    return saved;
   }
 
-  async pauseDeployment(id: string, reason: string): Promise<Deployment | undefined> {
-    // Simulates POST /api/deployments/:id/pause
-    const dep = this.deployments.find(d => d.id === id);
+  async pauseDeployment(id: string, reason?: string): Promise<Deployment | undefined> {
+    if (this.mode === 'api' && typeof fetch !== 'undefined') {
+      try {
+        const res = await fetch(`${this.apiBaseUrl}/deployments/${id}/pause`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && json.data) return json.data;
+        }
+      } catch {
+        // Fall back to local execution
+      }
+    }
+
+    const dep = await deploymentRepository.findById(id);
     if (!dep) return undefined;
+
+    validateDeploymentTransition(dep.status, 'PAUSED');
 
     dep.status = 'PAUSED';
     dep.health = 'WARNING';
@@ -68,23 +122,50 @@ class DeploymentsService {
       actor: 'Policy Engine / Operator',
     });
 
-    return Promise.resolve({ ...dep });
+    const saved = await deploymentRepository.save(dep);
+    await deploymentAuditAdapter.recordPause(saved, dep.pausedReason, 'MANUAL');
+    return saved;
   }
 
-  async rollbackDeployment(id: string, reason: string): Promise<Deployment | undefined> {
-    // Simulates POST /api/deployments/:id/rollback
-    const dep = this.deployments.find(d => d.id === id);
+  async rollbackDeployment(id: string, reason?: string): Promise<Deployment | undefined> {
+    if (this.mode === 'api' && typeof fetch !== 'undefined') {
+      try {
+        const res = await fetch(`${this.apiBaseUrl}/deployments/${id}/rollback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reason }),
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && json.data) return json.data;
+        }
+      } catch {
+        // Fall back to local execution
+      }
+    }
+
+    const dep = await deploymentRepository.findById(id);
     if (!dep) return undefined;
 
+    // 1. Enter intermediate state ROLLING_BACK
+    validateDeploymentTransition(dep.status, 'ROLLING_BACK');
+    dep.status = 'ROLLING_BACK';
+    dep.updatedAt = 'Just now';
+    await deploymentAuditAdapter.recordRollbackInitiated(dep, reason || 'Error rate exceeded production safety threshold.');
+
+    // 2. Complete rollback to ROLLED_BACK
+    validateDeploymentTransition(dep.status, 'ROLLED_BACK');
+    const targetBaselineVersion = dep.previousVersion;
     dep.status = 'ROLLED_BACK';
+    dep.version = targetBaselineVersion; // Restores running version to baseline v2.8.3
     dep.health = 'HEALTHY';
     dep.currentTrafficPercentage = 0;
     dep.targetTrafficPercentage = 0;
     dep.rollbackReason = reason || 'Error rate exceeded production safety threshold.';
     dep.updatedAt = 'Just now';
-    dep.completedAt = 'Just now';
+    dep.completedAt = new Date().toISOString();
 
-    // reset metrics back to baseline for safe rolled-back state
+    // Reset metrics back to baseline for safe rolled-back state
     dep.currentTelemetry.errorRate = 0.08;
     dep.currentTelemetry.p95Latency = 160;
 
@@ -98,26 +179,97 @@ class DeploymentsService {
       id: `tl-${Date.now()}`,
       timestamp: new Date().toISOString(),
       timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      title: `Automated Rollback to ${dep.previousVersion} Completed`,
-      description: `Traffic immediately reverted to baseline ${dep.previousVersion}. Blast radius safely contained.`,
+      title: `Automated Rollback to ${targetBaselineVersion} Completed`,
+      description: `Traffic immediately reverted to baseline ${targetBaselineVersion}. Blast radius safely contained.`,
       type: 'DANGER',
       actor: 'ChangeGuard Rollback Controller',
     });
 
-    return Promise.resolve({ ...dep });
+    const saved = await deploymentRepository.save(dep);
+    await deploymentAuditAdapter.recordRollbackCompleted(saved, targetBaselineVersion);
+    return saved;
+  }
+
+  async transitionDeploymentState(
+    id: string,
+    targetStatus: DeploymentStatus,
+    reason?: string
+  ): Promise<Deployment | undefined> {
+    const dep = await deploymentRepository.findById(id);
+    if (!dep) return undefined;
+
+    validateDeploymentTransition(dep.status, targetStatus);
+    const previousStatus = dep.status;
+    dep.status = targetStatus;
+    dep.updatedAt = 'Just now';
+
+    dep.timeline.unshift({
+      id: `tl-${Date.now()}`,
+      timestamp: new Date().toISOString(),
+      timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      title: `State Transition: ${previousStatus} → ${targetStatus}`,
+      description: reason || `Deployment state explicitly transitioned to ${targetStatus}.`,
+      type:
+        targetStatus === 'PAUSED'
+          ? 'WARNING'
+          : targetStatus === 'ROLLED_BACK' || targetStatus === 'FAILED'
+          ? 'DANGER'
+          : 'INFO',
+      actor: 'Canary Controller',
+    });
+
+    return await deploymentRepository.save(dep);
+  }
+
+  async handlePolicyCommand(command: DeploymentPolicyCommand): Promise<Deployment | undefined> {
+    const dep = await deploymentRepository.findById(command.deploymentId);
+    if (!dep) {
+      throw new UnknownDeploymentError(command.deploymentId);
+    }
+    policyReceiver.handleCommand(dep, command);
+    const saved = await deploymentRepository.save(dep);
+
+    const decision = (command.decision || (command as any).action) as string;
+    if (decision === 'PAUSE') {
+      await deploymentAuditAdapter.recordPause(saved, command.reason, 'POLICY');
+    } else if (decision === 'ROLLBACK') {
+      await deploymentAuditAdapter.recordRollbackInitiated(saved, command.reason);
+      await deploymentAuditAdapter.recordRollbackCompleted(saved, saved.version);
+    } else if (decision === 'PROMOTE' || decision === 'ALLOW') {
+      const stage = (command as any).targetStage || saved.currentTrafficPercentage;
+      await deploymentAuditAdapter.recordPromotion(saved, stage);
+    }
+
+    return saved;
+  }
+
+  resetDeployments(): void {
+    deploymentRepository.reset();
   }
 
   async simulateFailure(id: string): Promise<Deployment | undefined> {
-    const dep = this.deployments.find(d => d.id === id);
+    if (this.mode === 'api' && typeof fetch !== 'undefined') {
+      try {
+        const res = await fetch(`${this.apiBaseUrl}/deployments/${id}/simulate-failure`, {
+          method: 'POST',
+        });
+        if (res.ok) {
+          const json = await res.json();
+          if (json.success && json.data) return json.data;
+        }
+      } catch {
+        // Fall back to local execution
+      }
+    }
+
+    const dep = await deploymentRepository.findById(id);
     if (!dep) return undefined;
 
-    // Error rate jumps 0.42% -> 3.7%
+    // Error rate jumps 0.42% -> 3.7%, latency jumps 182ms -> 840ms
     dep.currentTelemetry.errorRate = 3.7;
     dep.currentTelemetry.p95Latency = 840;
     dep.currentTelemetry.cpuUtilization = 78;
     dep.health = 'CRITICAL';
-    dep.status = 'PAUSED';
-    dep.pausedReason = 'Telemetry Error Rate (3.7%) breached Policy Threshold (< 1.0%).';
     dep.updatedAt = 'Just now';
 
     dep.signals = dep.signals.map(s => {
@@ -133,8 +285,9 @@ class DeploymentsService {
       return s;
     });
 
+    const now = new Date();
     dep.telemetryHistory.push({
-      timestamp: '10:52',
+      timestamp: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       errorRate: 3.7,
       p95Latency: 840,
       requestsPerMinute: 13200,
@@ -145,15 +298,17 @@ class DeploymentsService {
 
     dep.timeline.unshift({
       id: `tl-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: now.toISOString(),
+      timeFormatted: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       title: 'CRITICAL: Error Rate Spiked to 3.7% (Breach)',
-      description: 'Threshold exceeded (< 1.0%). Autonomous policy triggered: Traffic progression halted.',
+      description: 'Threshold exceeded (< 1.0%). P95 latency spiked to 840ms. Safety alert dispatched.',
       type: 'DANGER',
       actor: 'ChangeGuard Verification Engine',
     });
 
-    return Promise.resolve({ ...dep });
+    const saved = await deploymentRepository.save(dep);
+    await deploymentAuditAdapter.recordFailureInjected(saved, 3.7, 840);
+    return saved;
   }
 }
 

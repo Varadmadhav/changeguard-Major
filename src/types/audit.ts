@@ -31,3 +31,24 @@ export interface AuditEvent {
   details: string;
   metadata?: Record<string, any>;
 }
+
+export interface AuditEventInput {
+  organizationId?: string;
+  actor: {
+    id?: string;
+    name: string;
+    type: 'USER' | 'SYSTEM' | 'POLICY_ENGINE' | 'AI_AGENT';
+    email?: string;
+  };
+  action: AuditActionType;
+  actionTitle: string;
+  resource: {
+    type: 'SERVICE' | 'DEPLOYMENT' | 'CHANGE' | 'POLICY' | 'INTEGRATION';
+    id: string;
+    name: string;
+  };
+  result: 'SUCCESS' | 'WARNING' | 'FAILED';
+  source: 'WEB_CONSOLE' | 'POLICY_ENGINE' | 'GITHUB_WEBHOOK' | 'ARGO_CONTROLLER' | 'SIMULATION_CONTROLLER';
+  details: string;
+  metadata?: Record<string, any>;
+}

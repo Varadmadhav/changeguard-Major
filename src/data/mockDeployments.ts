@@ -1,4 +1,4 @@
-import { Deployment } from '../types/deployment';
+import type { Deployment } from '../types/deployment';
 
 export const mockDeployments: Deployment[] = [
   {
@@ -6,7 +6,7 @@ export const mockDeployments: Deployment[] = [
     serviceId: 'srv-checkout',
     serviceName: 'Checkout Service',
     serviceTier: 'TIER_1',
-    version: 'v2.8.4',
+    version: 'v2.9.0',
     previousVersion: 'v2.8.3',
     environment: 'PRODUCTION',
     status: 'MONITORING',
