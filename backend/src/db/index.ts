@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import { config } from '../config/env.js';
 import { ServiceNode, DependencyEdge } from '../services/blastRadius.js';
 import { HistoricalRecord } from '../services/historicalSimilarity.js';
-import { Policy, PolicyRule, PolicyVersion, AuditEvent, Deployment, DeploymentStatus, Incident, Service, ImpactGraphResponse, ImpactGraphNode, ImpactGraphEdge, IncidentStatus } from '../types/shared.js';
+import { Policy, PolicyRule, PolicyVersion, AuditEvent, Deployment, DeploymentStatus, Incident, Service, ImpactGraphResponse, ImpactGraphNode, ImpactGraphEdge, IncidentStatus, OrgSettings, IntegrationRecord, DoraMetrics, RiskCalibrationPoint } from '../types/shared.js';
 
 export interface DbUser {
   id: string;
@@ -178,6 +178,8 @@ class Database {
   public deployments: Deployment[] = [];
   public incidents: Incident[] = [];
   public fullServices: Service[] = [];
+  public settings!: OrgSettings;
+  public integrations: IntegrationRecord[] = [];
 
   constructor() {
     this.initDefaultSeed();
@@ -920,6 +922,103 @@ class Database {
         actionsTaken: ['Autonomous pause executed', 'Pool sizing adjusted', 'Canary resumed after verification'],
       },
     ];
+
+    // Seed Settings (All 6 settings sections backed by DB)
+    this.settings = {
+      general: {
+        orgName: 'Acme Platform Engineering',
+        slug: 'acme-corp',
+        defaultEnvironment: 'PRODUCTION',
+        riskScoreThreshold: 75,
+        slackChannel: '#changeguard-deployments',
+      },
+      security: {
+        ssoEnabled: true,
+        ssoProvider: 'OKTA',
+        ssoEntrypoint: 'https://acme.okta.com/app/changeguard/sso/saml',
+        sessionTimeoutMinutes: 60,
+        mfaRequired: true,
+        ipAllowlist: ['10.0.0.0/8', '192.168.1.0/24'],
+      },
+      environments: [
+        { name: 'Production US-East', type: 'PRODUCTION', clusterUrl: 'https://k8s-prod-useast.acme.net', isProduction: true },
+        { name: 'Staging US-East', type: 'STAGING', clusterUrl: 'https://k8s-stage-useast.acme.net', isProduction: false },
+      ],
+      notifications: {
+        slackWebhookUrl: 'https://hooks.slack.com/services/T00/B00/X00DEMO',
+        slackAlertChannel: '#changeguard-deployments',
+        emailAlertsEnabled: true,
+        notifyOnSev1: true,
+        notifyOnSev2: true,
+      },
+      ai: {
+        provider: 'ANTHROPIC',
+        model: 'claude-3-5-sonnet',
+        apiKeyConfigured: true,
+        temperature: 0.2,
+        maxTokens: 4096,
+        riskCalibrationAutoTune: true,
+      },
+    };
+
+    // Seed Integrations
+    this.integrations = [
+      {
+        id: 'int-github',
+        name: 'GitHub',
+        category: 'VCS',
+        description: 'Pull request ingestion, semantic commit analysis, and PR safety status checks.',
+        iconName: 'Github',
+        status: 'CONNECTED',
+        lastSyncAt: '2 minutes ago',
+        connectedRepositoriesOrClusters: 14,
+        config: { repository: 'acme/checkout-service', branch: 'main', webhookEnabled: true },
+      },
+      {
+        id: 'int-gh-actions',
+        name: 'GitHub Actions',
+        category: 'CI_CD',
+        description: 'Automated CI build verification, step artifact scanning, and release gates.',
+        iconName: 'GitMerge',
+        status: 'CONNECTED',
+        lastSyncAt: '5 minutes ago',
+        connectedRepositoriesOrClusters: 14,
+        config: { endpoint: 'https://api.github.com/repos/acme/actions', webhookEnabled: true },
+      },
+      {
+        id: 'int-k8s',
+        name: 'Kubernetes',
+        category: 'CONTAINER_ORCHESTRATION',
+        description: 'Production cluster topology discovery, pod health inspection, and replica scaling.',
+        iconName: 'Server',
+        status: 'CONNECTED',
+        lastSyncAt: 'Just now',
+        connectedRepositoriesOrClusters: 4,
+        config: { clusterName: 'prod-us-east-1-eks', namespace: 'production' },
+      },
+      {
+        id: 'int-argo',
+        name: 'Argo Rollouts',
+        category: 'PROGRESSIVE_DELIVERY',
+        description: 'Native Canary and Blue/Green progressive traffic management & autonomous rollback.',
+        iconName: 'Cpu',
+        status: 'CONNECTED',
+        lastSyncAt: '1 minute ago',
+        connectedRepositoriesOrClusters: 4,
+        config: { endpoint: 'https://argo-rollouts.internal.acme.net', namespace: 'argo-rollouts' },
+      },
+      {
+        id: 'int-slack',
+        name: 'Slack',
+        category: 'NOTIFICATIONS',
+        description: 'Automated alerts for threshold breaches, policy approvals, and autonomous rollbacks.',
+        iconName: 'MessageSquare',
+        status: 'CONNECTED',
+        lastSyncAt: 'Just now',
+        connectedRepositoriesOrClusters: 1,
+        config: { channel: '#changeguard-deployments' },
+      },
+    ];
   }
 
   public async isConnected(): Promise<boolean> {
@@ -1571,8 +1670,98 @@ class Database {
     (err as any).code = 'PERMISSION_DENIED';
     throw err;
   }
+
+  // --- Settings Queries & Mutation ---
+  public async getSettings(orgId: string): Promise<OrgSettings> {
+    return { ...this.settings };
+  }
+
+  public async updateSettings(
+    orgId: string,
+    section: keyof OrgSettings,
+    data: any
+  ): Promise<OrgSettings> {
+    if (!this.settings[section]) {
+      const err = new Error(`Unknown settings section: ${section}`);
+      (err as any).statusCode = 400;
+      throw err;
+    }
+    Object.assign(this.settings[section], data);
+    return { ...this.settings };
+  }
+
+  // --- Integrations Queries & Mutation ---
+  public async listIntegrations(orgId: string): Promise<IntegrationRecord[]> {
+    return [...this.integrations];
+  }
+
+  public async getIntegrationById(id: string): Promise<IntegrationRecord | null> {
+    return this.integrations.find((i) => i.id === id) || null;
+  }
+
+  public async updateIntegration(
+    id: string,
+    updates: Partial<IntegrationRecord>
+  ): Promise<IntegrationRecord> {
+    const int = this.integrations.find((i) => i.id === id);
+    if (!int) {
+      const err = new Error(`Integration ${id} not found`);
+      (err as any).statusCode = 404;
+      throw err;
+    }
+    Object.assign(int, updates, { lastSyncAt: 'Just now' });
+    return { ...int };
+  }
+
+  // --- DORA & Calibration Analytics Queries ---
+  public async getDoraMetrics(orgId: string, periodDays = 30): Promise<DoraMetrics> {
+    const deployments = this.deployments.filter((d) => d.organizationId === orgId);
+    const total = Math.max(deployments.length, 1);
+    const failedOrRollback = deployments.filter(
+      (d) => d.status === 'ROLLED_BACK' || d.status === 'FAILED' || d.status === 'ABORTED'
+    ).length;
+
+    const cfr = parseFloat(((failedOrRollback / total) * 100).toFixed(1));
+    const frequency = parseFloat((total / periodDays).toFixed(2));
+    const leadTime = 1.8; // hours
+    const mttr = 14.2; // minutes
+
+    let rating: DoraMetrics['rating'] = 'ELITE';
+    if (cfr > 15) rating = 'LOW';
+    else if (cfr > 10) rating = 'MEDIUM';
+    else if (cfr > 5) rating = 'HIGH';
+
+    return {
+      deploymentFrequencyPerDay: frequency,
+      leadTimeForChangesHours: leadTime,
+      changeFailureRatePercentage: cfr,
+      meanTimeToRecoveryMinutes: mttr,
+      rating,
+      periodDays,
+    };
+  }
+
+  public async getRiskCalibration(orgId: string): Promise<RiskCalibrationPoint[]> {
+    const changes = this.changes.filter((c) => c.organization_id === orgId);
+    return changes.map((c) => {
+      let outcome: RiskCalibrationPoint['actualOutcome'] = 'CLEAN';
+      if (c.status === 'POLICY_BLOCKED') outcome = 'WARNING';
+      else if (c.risk.score >= 80) outcome = 'INCIDENT';
+      else if (c.risk.score >= 60) outcome = 'WARNING';
+
+      return {
+        changeId: c.id,
+        changeTitle: c.title,
+        predictedRiskScore: c.risk.score,
+        actualOutcome: outcome,
+        serviceName: c.repository.split('/')[1] || c.repository,
+        calibratedAt: c.updatedAt,
+      };
+    });
+  }
 }
 
 export const db = new Database();
+
 
 

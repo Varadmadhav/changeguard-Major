@@ -4,6 +4,7 @@ import { db } from '../db/index.js';
 import { AppError } from '../plugins/errorHandler.js';
 import { authenticate } from '../plugins/auth.js';
 import { ROLE_PERMISSIONS } from '../types/shared.js';
+import { SamlService } from '../services/saml.js';
 
 interface LoginBody {
   email?: string;
@@ -94,4 +95,40 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       permissions: ROLE_PERMISSIONS[user.role] || [],
     });
   });
+
+  // POST /api/v1/auth/sso/callback - process enterprise SAML assertions
+  fastify.post<{ Body: { SAMLResponse: string } }>('/api/v1/auth/sso/callback', async (request, reply) => {
+    const { SAMLResponse } = request.body || {};
+    if (!SAMLResponse) {
+      throw new AppError(400, 'BAD_REQUEST', 'SAMLResponse is required');
+    }
+
+    const { user, isNewUser } = await SamlService.processSamlResponse(SAMLResponse);
+
+    const payload = {
+      userId: user.id,
+      organizationId: user.organization_id,
+      email: user.email,
+      name: user.name,
+      role: user.role,
+    };
+
+    const token = fastify.jwt.sign(payload, { expiresIn: '8h' });
+
+    return reply.status(200).send({
+      token,
+      user: {
+        id: user.id,
+        organizationId: user.organization_id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        isActive: user.is_active,
+        createdAt: user.created_at,
+        updatedAt: user.updated_at,
+      },
+      isNewUser,
+    });
+  });
 };
+

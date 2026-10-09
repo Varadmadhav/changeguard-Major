@@ -1,0 +1,57 @@
+name: ChangeGuard Continuous Integration & Release
+
+on:
+  push:
+    branches: [main, jayeshDev]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate-and-test:
+    name: Lint, Typecheck, and Test Suite
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Build Frontend
+        run: npm run build
+
+      - name: Install Backend Dependencies
+        working-directory: ./backend
+        run: npm ci
+
+      - name: Compile Backend TypeScript
+        working-directory: ./backend
+        run: npm run build
+
+      - name: Run Full ChangeGuard Test Suite (Phases 1-6)
+        working-directory: ./backend
+        run: npm test
+
+  docker-build-verify:
+    name: Verify Multi-Stage Container Build
+    needs: validate-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Production Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: false
+          tags: changeguard:latest

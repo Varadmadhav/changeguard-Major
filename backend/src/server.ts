@@ -17,6 +17,9 @@ import { deploymentRoutes } from './routes/deployments.js';
 import { serviceRoutes } from './routes/services.js';
 import { incidentRoutes } from './routes/incidents.js';
 import { impactGraphRoutes } from './routes/impactGraph.js';
+import { settingsRoutes } from './routes/settings.js';
+import { integrationRoutes } from './routes/integrations.js';
+import { analyticsRoutes } from './routes/analytics.js';
 
 export async function buildApp() {
   const isTest = process.env.NODE_ENV === 'test' || config.nodeEnv === 'test';
@@ -58,6 +61,9 @@ export async function buildApp() {
   await app.register(serviceRoutes);
   await app.register(incidentRoutes);
   await app.register(impactGraphRoutes);
+  await app.register(settingsRoutes);
+  await app.register(integrationRoutes);
+  await app.register(analyticsRoutes);
 
   return app;
 }
@@ -77,6 +83,10 @@ export async function startServer() {
     console.log(` Services API:  http://localhost:${config.port}/api/v1/services`);
     console.log(` Incidents API: http://localhost:${config.port}/api/v1/incidents`);
     console.log(` Impact Graph:  http://localhost:${config.port}/api/v1/impact-graph`);
+    console.log(` Settings API:  http://localhost:${config.port}/api/v1/settings`);
+    console.log(` Integrations:  http://localhost:${config.port}/api/v1/integrations`);
+    console.log(` Analytics API: http://localhost:${config.port}/api/v1/analytics/summary`);
+    console.log(` DORA API:      http://localhost:${config.port}/api/v1/analytics/dora`);
     console.log(` Audit Log API: http://localhost:${config.port}/api/v1/audit-log`);
     console.log(`======================================================\n`);
     return app;

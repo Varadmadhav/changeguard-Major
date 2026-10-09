@@ -438,4 +438,77 @@ export interface ImpactGraphResponse {
   };
 }
 
+// --- Settings & Integrations Domain Models ---
+export interface OrgSettings {
+  general: {
+    orgName: string;
+    slug: string;
+    defaultEnvironment: string;
+    riskScoreThreshold: number;
+    slackChannel: string;
+  };
+  security: {
+    ssoEnabled: boolean;
+    ssoProvider: 'OKTA' | 'AZURE_AD' | 'GOOGLE' | 'GENERIC_SAML';
+    ssoEntrypoint: string;
+    sessionTimeoutMinutes: number;
+    mfaRequired: boolean;
+    ipAllowlist: string[];
+  };
+  environments: Array<{
+    name: string;
+    type: 'PRODUCTION' | 'STAGING' | 'DEVELOPMENT';
+    clusterUrl: string;
+    isProduction: boolean;
+  }>;
+  notifications: {
+    slackWebhookUrl?: string;
+    slackAlertChannel: string;
+    emailAlertsEnabled: boolean;
+    pagerDutyKey?: string;
+    notifyOnSev1: boolean;
+    notifyOnSev2: boolean;
+  };
+  ai: {
+    provider: 'ANTHROPIC' | 'OPENAI' | 'MOCK';
+    model: string;
+    apiKeyConfigured: boolean;
+    temperature: number;
+    maxTokens: number;
+    riskCalibrationAutoTune: boolean;
+  };
+}
+
+export interface IntegrationRecord {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  iconName: string;
+  status: 'CONNECTED' | 'DISCONNECTED' | 'ERROR';
+  lastSyncAt: string;
+  connectedRepositoriesOrClusters: number;
+  config: Record<string, any>;
+}
+
+// --- DORA & Calibration Analytics Domain Models ---
+export interface DoraMetrics {
+  deploymentFrequencyPerDay: number;
+  leadTimeForChangesHours: number;
+  changeFailureRatePercentage: number;
+  meanTimeToRecoveryMinutes: number;
+  rating: 'ELITE' | 'HIGH' | 'MEDIUM' | 'LOW';
+  periodDays: number;
+}
+
+export interface RiskCalibrationPoint {
+  changeId: string;
+  changeTitle: string;
+  predictedRiskScore: number;
+  actualOutcome: 'CLEAN' | 'WARNING' | 'INCIDENT' | 'ROLLBACK';
+  serviceName: string;
+  calibratedAt: string;
+}
+
+
 
