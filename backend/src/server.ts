@@ -14,6 +14,9 @@ import { policyRoutes } from './routes/policies.js';
 import { approvalRoutes } from './routes/approvals.js';
 import { auditRoutes } from './routes/audit.js';
 import { deploymentRoutes } from './routes/deployments.js';
+import { serviceRoutes } from './routes/services.js';
+import { incidentRoutes } from './routes/incidents.js';
+import { impactGraphRoutes } from './routes/impactGraph.js';
 
 export async function buildApp() {
   const isTest = process.env.NODE_ENV === 'test' || config.nodeEnv === 'test';
@@ -52,6 +55,9 @@ export async function buildApp() {
   await app.register(approvalRoutes);
   await app.register(auditRoutes);
   await app.register(deploymentRoutes);
+  await app.register(serviceRoutes);
+  await app.register(incidentRoutes);
+  await app.register(impactGraphRoutes);
 
   return app;
 }
@@ -68,6 +74,9 @@ export async function startServer() {
     console.log(` Changes API:   http://localhost:${config.port}/api/v1/changes`);
     console.log(` Policies API:  http://localhost:${config.port}/api/v1/policies`);
     console.log(` Deployments:   http://localhost:${config.port}/api/v1/deployments`);
+    console.log(` Services API:  http://localhost:${config.port}/api/v1/services`);
+    console.log(` Incidents API: http://localhost:${config.port}/api/v1/incidents`);
+    console.log(` Impact Graph:  http://localhost:${config.port}/api/v1/impact-graph`);
     console.log(` Audit Log API: http://localhost:${config.port}/api/v1/audit-log`);
     console.log(`======================================================\n`);
     return app;

@@ -471,28 +471,5 @@ export const deploymentRoutes: FastifyPluginAsync = async (fastify) => {
       return reply.status(200).send({ data: evaluation });
     }
   );
-
-  // GET /api/v1/incidents - list incidents
-  fastify.get('/api/v1/incidents', { preHandler: [authenticate] }, async (request, reply) => {
-    const orgId = request.user.organizationId;
-    const incidents = await db.listIncidents(orgId);
-    return reply.status(200).send({
-      data: incidents,
-      meta: { total: incidents.length },
-    });
-  });
-
-  // GET /api/v1/incidents/:id - get incident by ID
-  fastify.get<{ Params: { id: string } }>(
-    '/api/v1/incidents/:id',
-    { preHandler: [authenticate] },
-    async (request, reply) => {
-      const { id } = request.params;
-      const incident = await db.getIncidentById(id);
-      if (!incident) {
-        throw new AppError(404, 'INCIDENT_NOT_FOUND', `Incident ${id} not found`);
-      }
-      return reply.status(200).send({ data: incident });
-    }
-  );
 };
+

@@ -4,7 +4,7 @@ import bcrypt from 'bcryptjs';
 import { config } from '../config/env.js';
 import { ServiceNode, DependencyEdge } from '../services/blastRadius.js';
 import { HistoricalRecord } from '../services/historicalSimilarity.js';
-import { Policy, PolicyRule, PolicyVersion, AuditEvent, Deployment, DeploymentStatus, Incident } from '../types/shared.js';
+import { Policy, PolicyRule, PolicyVersion, AuditEvent, Deployment, DeploymentStatus, Incident, Service, ImpactGraphResponse, ImpactGraphNode, ImpactGraphEdge, IncidentStatus } from '../types/shared.js';
 
 export interface DbUser {
   id: string;
@@ -177,6 +177,7 @@ class Database {
   public auditEvents: AuditEvent[] = [];
   public deployments: Deployment[] = [];
   public incidents: Incident[] = [];
+  public fullServices: Service[] = [];
 
   constructor() {
     this.initDefaultSeed();
@@ -313,6 +314,163 @@ class Database {
       { sourceId: 'svc-checkout-01', targetId: 'svc-checkout-db', depType: 'DATABASE' },
       { sourceId: 'svc-payment-01', targetId: 'svc-auth-01', depType: 'SERVICE' },
       { sourceId: 'svc-checkout-01', targetId: 'svc-notification-01', depType: 'SERVICE' },
+    ];
+
+    this.fullServices = [
+      {
+        id: 'srv-checkout',
+        organizationId: orgId,
+        name: 'Checkout API',
+        slug: 'checkout-service',
+        description: 'Mission-critical checkout workflow engine, cart commitment, and transactional order routing.',
+        tier: 'TIER_1',
+        owner: {
+          team: 'Payments Engineering',
+          lead: 'Alex Morgan',
+          slackChannel: '#payments-eng',
+        },
+        repository: 'acme/checkout-service',
+        environment: 'PRODUCTION',
+        health: 'HEALTHY',
+        currentRisk: 'HIGH',
+        riskScore: 78,
+        uptimePercentage: 99.98,
+        deploymentsCount: 48,
+        activeDeploymentsCount: 1,
+        incidentsCount: 1,
+        lastDeploymentAt: '8 min ago',
+        lastDeploymentVersion: 'v2.8.4',
+        telemetry: {
+          errorRate: 0.04,
+          p95Latency: 182,
+          requestsPerSecond: 213,
+          cpuPercentage: 54,
+          memoryPercentage: 67,
+        },
+        dependencies: [
+          { id: 'srv-payment', name: 'Payment Service', type: 'SERVICE', direction: 'DOWNSTREAM', health: 'HEALTHY', protocol: 'gRPC' },
+          { id: 'db-postgres', name: 'PostgreSQL Primary Cluster', type: 'DATABASE', direction: 'DOWNSTREAM', health: 'HEALTHY', protocol: 'PostgreSQL' },
+          { id: 'srv-order', name: 'Order Service', type: 'SERVICE', direction: 'DOWNSTREAM', health: 'HEALTHY', protocol: 'gRPC' },
+          { id: 'q-checkout-events', name: 'Kafka checkout.events', type: 'QUEUE', direction: 'DOWNSTREAM', health: 'HEALTHY', protocol: 'Kafka' },
+        ],
+        dependents: [
+          { id: 'srv-gw', name: 'API Gateway', type: 'API_GATEWAY', direction: 'UPSTREAM', health: 'HEALTHY', protocol: 'REST' },
+        ],
+        tags: ['pci-dss', 'tier-1', 'sox-compliant', 'revenue-critical'],
+      },
+      {
+        id: 'srv-payment',
+        organizationId: orgId,
+        name: 'Payment Service',
+        slug: 'payment-service',
+        description: 'Vault tokenization, payment gateway dispatch (Stripe/Adyen), and ledger settlement.',
+        tier: 'TIER_1',
+        owner: {
+          team: 'Payments Engineering',
+          lead: 'Maria Santos',
+          slackChannel: '#payments-core',
+        },
+        repository: 'acme/payment-service',
+        environment: 'PRODUCTION',
+        health: 'HEALTHY',
+        currentRisk: 'LOW',
+        riskScore: 18,
+        uptimePercentage: 99.995,
+        deploymentsCount: 34,
+        activeDeploymentsCount: 0,
+        incidentsCount: 0,
+        lastDeploymentAt: '3 days ago',
+        lastDeploymentVersion: 'v3.2.1',
+        telemetry: {
+          errorRate: 0.02,
+          p95Latency: 240,
+          requestsPerSecond: 160,
+          cpuPercentage: 38,
+          memoryPercentage: 51,
+        },
+        dependencies: [
+          { id: 'ext-stripe', name: 'Stripe Gateway API', type: 'THIRD_PARTY', direction: 'DOWNSTREAM', health: 'HEALTHY', protocol: 'REST' },
+          { id: 'db-postgres', name: 'PostgreSQL Primary Cluster', type: 'DATABASE', direction: 'DOWNSTREAM', health: 'HEALTHY', protocol: 'PostgreSQL' },
+        ],
+        dependents: [
+          { id: 'srv-checkout', name: 'Checkout API', type: 'SERVICE', direction: 'UPSTREAM', health: 'HEALTHY', protocol: 'gRPC' },
+        ],
+        tags: ['pci-dss', 'tier-1', 'sox-compliant'],
+      },
+      {
+        id: 'srv-order',
+        organizationId: orgId,
+        name: 'Order Service',
+        slug: 'order-service',
+        description: 'Order state machine, fulfillment coordination, and customer purchase ledger.',
+        tier: 'TIER_1',
+        owner: {
+          team: 'Fulfillment Platform',
+          lead: 'David Kim',
+          slackChannel: '#order-platform',
+        },
+        repository: 'acme/order-service',
+        environment: 'PRODUCTION',
+        health: 'HEALTHY',
+        currentRisk: 'LOW',
+        riskScore: 22,
+        uptimePercentage: 99.97,
+        deploymentsCount: 62,
+        activeDeploymentsCount: 0,
+        incidentsCount: 0,
+        lastDeploymentAt: '1 day ago',
+        lastDeploymentVersion: 'v1.14.0',
+        telemetry: {
+          errorRate: 0.01,
+          p95Latency: 95,
+          requestsPerSecond: 320,
+          cpuPercentage: 42,
+          memoryPercentage: 58,
+        },
+        dependencies: [
+          { id: 'db-postgres', name: 'PostgreSQL Primary Cluster', type: 'DATABASE', direction: 'DOWNSTREAM', health: 'HEALTHY', protocol: 'PostgreSQL' },
+        ],
+        dependents: [
+          { id: 'srv-checkout', name: 'Checkout API', type: 'SERVICE', direction: 'UPSTREAM', health: 'HEALTHY', protocol: 'gRPC' },
+        ],
+        tags: ['tier-1', 'fulfillment'],
+      },
+      {
+        id: 'srv-gw',
+        organizationId: orgId,
+        name: 'API Gateway',
+        slug: 'api-gateway',
+        description: 'Edge reverse proxy, TLS termination, OAuth verification, and distributed rate limiting.',
+        tier: 'TIER_1',
+        owner: {
+          team: 'Core Infrastructure',
+          lead: 'Riley Vance',
+          slackChannel: '#infra-core',
+        },
+        repository: 'acme/api-gateway',
+        environment: 'PRODUCTION',
+        health: 'HEALTHY',
+        currentRisk: 'LOW',
+        riskScore: 12,
+        uptimePercentage: 99.999,
+        deploymentsCount: 15,
+        activeDeploymentsCount: 0,
+        incidentsCount: 0,
+        lastDeploymentAt: '2 weeks ago',
+        lastDeploymentVersion: 'v4.1.0',
+        telemetry: {
+          errorRate: 0.01,
+          p95Latency: 28,
+          requestsPerSecond: 1840,
+          cpuPercentage: 62,
+          memoryPercentage: 45,
+        },
+        dependencies: [
+          { id: 'srv-checkout', name: 'Checkout API', type: 'SERVICE', direction: 'DOWNSTREAM', health: 'HEALTHY', protocol: 'REST' },
+        ],
+        dependents: [],
+        tags: ['edge', 'tier-1', 'security-gateway'],
+      },
     ];
 
     this.history = [
@@ -1245,7 +1403,176 @@ class Database {
     this.incidents.unshift(incident);
     return incident;
   }
+
+  public async updateIncidentStatus(id: string, status: IncidentStatus, comment?: string): Promise<Incident> {
+    const inc = this.incidents.find((i) => i.id === id || i.code === id);
+    if (!inc) {
+      const err = new Error(`Incident ${id} not found`);
+      (err as any).statusCode = 404;
+      (err as any).code = 'NOT_FOUND';
+      throw err;
+    }
+
+    inc.status = status;
+    const now = new Date().toISOString();
+    if (status === 'RESOLVED') {
+      inc.resolvedAt = now;
+      inc.durationFormatted = 'Resolved (42m)';
+    }
+
+    inc.timeline.unshift({
+      id: `tl-inc-${Date.now()}`,
+      timestamp: now,
+      timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      title: `Incident status updated to ${status}`,
+      description: comment || `Status transition executed: ${status}`,
+      actor: 'Operator / SRE',
+      isAutomatic: false,
+      type: status === 'RESOLVED' ? 'RESOLVE' : 'ACTION',
+    });
+
+    return inc;
+  }
+
+  public async updateIncidentRca(id: string, rca: Partial<Incident['rootCauseAnalysis']>): Promise<Incident> {
+    const inc = this.incidents.find((i) => i.id === id || i.code === id);
+    if (!inc) {
+      const err = new Error(`Incident ${id} not found`);
+      (err as any).statusCode = 404;
+      (err as any).code = 'NOT_FOUND';
+      throw err;
+    }
+
+    Object.assign(inc.rootCauseAnalysis, rca);
+    return inc;
+  }
+
+  // --- Service Catalog & Topology Queries ---
+  public async listServices(
+    orgId: string,
+    filters?: { tier?: string; health?: string; environment?: string }
+  ): Promise<Service[]> {
+    let list = this.fullServices.filter((s) => s.organizationId === orgId);
+    if (filters?.tier) {
+      list = list.filter((s) => s.tier === filters.tier);
+    }
+    if (filters?.health) {
+      list = list.filter((s) => s.health === filters.health);
+    }
+    if (filters?.environment) {
+      list = list.filter((s) => s.environment === filters.environment);
+    }
+    return list;
+  }
+
+  public async getServiceById(id: string): Promise<Service | null> {
+    return (
+      this.fullServices.find(
+        (s) => s.id === id || s.slug === id || s.name.toLowerCase() === id.toLowerCase()
+      ) || null
+    );
+  }
+
+  public async upsertService(service: Service): Promise<Service> {
+    const idx = this.fullServices.findIndex((s) => s.id === service.id);
+    if (idx >= 0) {
+      this.fullServices[idx] = service;
+    } else {
+      this.fullServices.push(service);
+    }
+    return service;
+  }
+
+  public async getImpactGraph(orgId: string, serviceId?: string): Promise<ImpactGraphResponse> {
+    const services = this.fullServices.filter((s) => s.organizationId === orgId);
+    const nodesMap = new Map<string, ImpactGraphNode>();
+    const edges: ImpactGraphEdge[] = [];
+
+    for (const s of services) {
+      nodesMap.set(s.id, {
+        id: s.id,
+        name: s.name,
+        type: 'SERVICE',
+        tier: s.tier,
+        health: s.health,
+        currentErrorRate: `${s.telemetry.errorRate}%`,
+        blastRadiusScore: s.riskScore,
+        environment: s.environment,
+      });
+
+      for (const dep of s.dependencies) {
+        if (!nodesMap.has(dep.id)) {
+          nodesMap.set(dep.id, {
+            id: dep.id,
+            name: dep.name,
+            type: dep.type,
+            tier: dep.type === 'DATABASE' ? 'TIER_1' : 'TIER_2',
+            health: dep.health === 'DOWN' ? 'CRITICAL' : dep.health,
+            currentErrorRate: '0.01%',
+            blastRadiusScore: dep.type === 'DATABASE' ? 90 : 50,
+            environment: s.environment,
+          });
+        }
+
+        edges.push({
+          id: `edge-${s.id}-${dep.id}`,
+          source: s.id,
+          target: dep.id,
+          type: dep.type,
+          protocol: dep.protocol,
+        });
+      }
+    }
+
+    let allNodes = Array.from(nodesMap.values());
+    let allEdges = edges;
+
+    if (serviceId) {
+      const targetService = this.fullServices.find((s) => s.id === serviceId || s.slug === serviceId);
+      if (targetService) {
+        const relevantIds = new Set<string>([targetService.id]);
+        targetService.dependencies.forEach((d) => relevantIds.add(d.id));
+        targetService.dependents.forEach((d) => relevantIds.add(d.id));
+
+        allNodes = allNodes.filter((n) => relevantIds.has(n.id));
+        allEdges = allEdges.filter((e) => relevantIds.has(e.source) && relevantIds.has(e.target));
+      }
+    }
+
+    const totalServices = allNodes.filter((n) => n.type === 'SERVICE').length;
+    const tier1Services = allNodes.filter((n) => n.tier === 'TIER_1').length;
+    const criticalDatabases = allNodes.filter((n) => n.type === 'DATABASE').length;
+    const healthyCount = allNodes.filter((n) => n.health === 'HEALTHY').length;
+    const healthyPercentage = allNodes.length ? Math.round((healthyCount / allNodes.length) * 100) : 100;
+
+    return {
+      nodes: allNodes,
+      edges: allEdges,
+      metrics: {
+        totalServices,
+        tier1Services,
+        criticalDatabases,
+        healthyPercentage,
+      },
+    };
+  }
+
+  // --- Append-Only Forensic Audit Immutability Guards (PRD Section 14.5) ---
+  public async updateAuditEvent(): Promise<never> {
+    const err = new Error('Audit log is append-only. Modification of audit events is strictly prohibited.');
+    (err as any).statusCode = 403;
+    (err as any).code = 'PERMISSION_DENIED';
+    throw err;
+  }
+
+  public async deleteAuditEvent(): Promise<never> {
+    const err = new Error('Audit log is append-only. Deletion of audit events is strictly prohibited.');
+    (err as any).statusCode = 403;
+    (err as any).code = 'PERMISSION_DENIED';
+    throw err;
+  }
 }
 
 export const db = new Database();
+
 

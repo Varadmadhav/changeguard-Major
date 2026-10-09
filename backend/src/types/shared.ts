@@ -362,3 +362,80 @@ export interface Incident {
   actionsTaken: string[];
 }
 
+// --- Service Catalog & Topology Domain Models ---
+export interface ServiceDependencyNode {
+  id: string;
+  name: string;
+  type: 'SERVICE' | 'DATABASE' | 'QUEUE' | 'API_GATEWAY' | 'CACHE' | 'THIRD_PARTY';
+  direction: 'UPSTREAM' | 'DOWNSTREAM';
+  health: 'HEALTHY' | 'WARNING' | 'DEGRADED' | 'DOWN';
+  protocol: 'gRPC' | 'REST' | 'PostgreSQL' | 'Kafka' | 'Redis';
+}
+
+export interface Service {
+  id: string;
+  organizationId: string;
+  name: string;
+  slug: string;
+  description: string;
+  tier: 'TIER_1' | 'TIER_2' | 'TIER_3';
+  owner: {
+    team: string;
+    lead: string;
+    slackChannel: string;
+  };
+  repository: string;
+  environment: 'PRODUCTION' | 'STAGING' | 'DEVELOPMENT';
+  health: 'HEALTHY' | 'WARNING' | 'DEGRADED' | 'CRITICAL';
+  currentRisk: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  riskScore: number;
+  uptimePercentage: number;
+  deploymentsCount: number;
+  activeDeploymentsCount: number;
+  incidentsCount: number;
+  lastDeploymentAt: string;
+  lastDeploymentVersion: string;
+  telemetry: {
+    errorRate: number;
+    p95Latency: number;
+    requestsPerSecond: number;
+    cpuPercentage: number;
+    memoryPercentage: number;
+  };
+  dependencies: ServiceDependencyNode[];
+  dependents: ServiceDependencyNode[];
+  tags: string[];
+}
+
+// --- Impact Graph Domain Models ---
+export interface ImpactGraphNode {
+  id: string;
+  name: string;
+  type: 'SERVICE' | 'DATABASE' | 'QUEUE' | 'API_GATEWAY' | 'CACHE' | 'THIRD_PARTY';
+  tier: 'TIER_1' | 'TIER_2' | 'TIER_3';
+  health: 'HEALTHY' | 'WARNING' | 'DEGRADED' | 'CRITICAL';
+  currentErrorRate: string;
+  blastRadiusScore: number;
+  environment: string;
+}
+
+export interface ImpactGraphEdge {
+  id: string;
+  source: string;
+  target: string;
+  type: 'SERVICE' | 'DATABASE' | 'QUEUE' | 'API_GATEWAY' | 'CACHE' | 'THIRD_PARTY';
+  protocol: string;
+}
+
+export interface ImpactGraphResponse {
+  nodes: ImpactGraphNode[];
+  edges: ImpactGraphEdge[];
+  metrics: {
+    totalServices: number;
+    tier1Services: number;
+    criticalDatabases: number;
+    healthyPercentage: number;
+  };
+}
+
+
