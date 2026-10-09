@@ -14,7 +14,7 @@ This document provides a comprehensive technical overview of the **ChangeGuard**
 4. **Trigger Autonomous Rollbacks in $<30$ Seconds**: Continuously monitor real-time Prometheus telemetry; if an anomaly or threshold breach is sustained, ChangeGuard halts traffic and rolls back to baseline without human intervention.
 5. **Auto-Generate Post-Mortems & Audits**: Automatically draft incident reports, root cause analyses (RCA), and maintain an immutable, forensic-grade audit ledger.
 
----
+--- 
 
 ## 2. High-Level System Architecture
 
