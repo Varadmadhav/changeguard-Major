@@ -158,14 +158,15 @@ export const changeRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const { id } = request.params;
-      const approved = await db.approveChange(id, request.user.id, request.user.organizationId);
+      const result = await db.approveChange(id, request.user.id, request.user.organizationId);
 
-      if (!approved) {
+      if (!result) {
         throw new AppError(404, 'CHANGE_NOT_FOUND', `Change with ID ${id} not found`);
       }
 
       return reply.status(200).send({
-        data: approved,
+        data: result.change,
+        isFullyApproved: result.isFullyApproved,
         message: 'Release policy recommendation approved successfully',
       });
     }

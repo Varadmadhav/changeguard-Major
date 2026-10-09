@@ -1,23 +1,50 @@
 import { Deployment } from '../types/deployment';
 import { mockDeployments } from '../data/mockDeployments';
+import { apiClient } from './apiClient';
 
 class DeploymentsService {
   private deployments: Deployment[] = [...mockDeployments];
 
+  private isMockMode(): boolean {
+    return import.meta.env.VITE_USE_MOCK_DATA !== 'false';
+  }
+
   async getDeployments(): Promise<Deployment[]> {
-    // Simulates GET /api/deployments
+    if (!this.isMockMode()) {
+      try {
+        const response = await apiClient.get<{ data: Deployment[] }>('/deployments');
+        return response.data;
+      } catch (err) {
+        console.warn('[DeploymentsService] Failed to fetch deployments from API, falling back to mock:', err);
+      }
+    }
     return Promise.resolve([...this.deployments]);
   }
 
   async getDeploymentById(id: string): Promise<Deployment | undefined> {
-    // Simulates GET /api/deployments/:id
+    if (!this.isMockMode()) {
+      try {
+        const response = await apiClient.get<{ data: Deployment }>(`/deployments/${id}`);
+        return response.data;
+      } catch (err) {
+        console.warn(`[DeploymentsService] Failed to fetch deployment ${id} from API, falling back to mock:`, err);
+      }
+    }
     return Promise.resolve(
       this.deployments.find(d => d.id === id || d.serviceId === id || d.serviceName.toLowerCase().includes(id.toLowerCase()))
     );
   }
 
   async promoteDeployment(id: string): Promise<Deployment | undefined> {
-    // Simulates POST /api/deployments/:id/promote
+    if (!this.isMockMode()) {
+      try {
+        const response = await apiClient.post<{ data: Deployment }>(`/deployments/${id}/promote`);
+        return response.data;
+      } catch (err) {
+        console.warn(`[DeploymentsService] Failed to promote deployment ${id} on API, falling back to local:`, err);
+      }
+    }
+
     const dep = this.deployments.find(d => d.id === id);
     if (!dep) return undefined;
 
@@ -49,7 +76,15 @@ class DeploymentsService {
   }
 
   async pauseDeployment(id: string, reason: string): Promise<Deployment | undefined> {
-    // Simulates POST /api/deployments/:id/pause
+    if (!this.isMockMode()) {
+      try {
+        const response = await apiClient.post<{ data: Deployment }>(`/deployments/${id}/pause`, { reason });
+        return response.data;
+      } catch (err) {
+        console.warn(`[DeploymentsService] Failed to pause deployment ${id} on API, falling back to local:`, err);
+      }
+    }
+
     const dep = this.deployments.find(d => d.id === id);
     if (!dep) return undefined;
 
@@ -72,7 +107,15 @@ class DeploymentsService {
   }
 
   async rollbackDeployment(id: string, reason: string): Promise<Deployment | undefined> {
-    // Simulates POST /api/deployments/:id/rollback
+    if (!this.isMockMode()) {
+      try {
+        const response = await apiClient.post<{ data: Deployment }>(`/deployments/${id}/rollback`, { reason });
+        return response.data;
+      } catch (err) {
+        console.warn(`[DeploymentsService] Failed to rollback deployment ${id} on API, falling back to local:`, err);
+      }
+    }
+
     const dep = this.deployments.find(d => d.id === id);
     if (!dep) return undefined;
 
@@ -108,6 +151,18 @@ class DeploymentsService {
   }
 
   async simulateFailure(id: string): Promise<Deployment | undefined> {
+    if (!this.isMockMode()) {
+      try {
+        const response = await apiClient.post<{ data: { deployment: Deployment } }>(
+          `/deployments/${id}/simulate-failure`,
+          { errorRate: 3.7, p95Latency: 840 }
+        );
+        return response.data.deployment;
+      } catch (err) {
+        console.warn(`[DeploymentsService] Failed to simulate failure on API, running local simulator:`, err);
+      }
+    }
+
     const dep = this.deployments.find(d => d.id === id);
     if (!dep) return undefined;
 

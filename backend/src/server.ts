@@ -10,6 +10,10 @@ import { teamRoutes } from './routes/team.js';
 import { apiKeyRoutes } from './routes/apiKeys.js';
 import { webhookRoutes } from './routes/webhook.js';
 import { changeRoutes } from './routes/changes.js';
+import { policyRoutes } from './routes/policies.js';
+import { approvalRoutes } from './routes/approvals.js';
+import { auditRoutes } from './routes/audit.js';
+import { deploymentRoutes } from './routes/deployments.js';
 
 export async function buildApp() {
   const isTest = process.env.NODE_ENV === 'test' || config.nodeEnv === 'test';
@@ -44,6 +48,10 @@ export async function buildApp() {
   await app.register(apiKeyRoutes);
   await app.register(webhookRoutes);
   await app.register(changeRoutes);
+  await app.register(policyRoutes);
+  await app.register(approvalRoutes);
+  await app.register(auditRoutes);
+  await app.register(deploymentRoutes);
 
   return app;
 }
@@ -58,6 +66,9 @@ export async function startServer() {
     console.log(` Ready probe:   http://localhost:${config.port}/api/v1/ready`);
     console.log(` Webhook URL:   http://localhost:${config.port}/api/v1/webhook/github`);
     console.log(` Changes API:   http://localhost:${config.port}/api/v1/changes`);
+    console.log(` Policies API:  http://localhost:${config.port}/api/v1/policies`);
+    console.log(` Deployments:   http://localhost:${config.port}/api/v1/deployments`);
+    console.log(` Audit Log API: http://localhost:${config.port}/api/v1/audit-log`);
     console.log(`======================================================\n`);
     return app;
   } catch (err) {

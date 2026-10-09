@@ -1,21 +1,48 @@
 import { Policy, PolicyRule } from '../types/policy';
 import { mockPolicies } from '../data/mockPolicies';
+import { apiClient } from './apiClient';
 
 class PoliciesService {
   private policies: Policy[] = [...mockPolicies];
 
+  private isMockMode(): boolean {
+    return import.meta.env.VITE_USE_MOCK_DATA !== 'false';
+  }
+
   async getPolicies(): Promise<Policy[]> {
-    // Simulates GET /api/policies
+    if (!this.isMockMode()) {
+      try {
+        const response = await apiClient.get<{ data: Policy[] }>('/policies');
+        return response.data;
+      } catch (err) {
+        console.warn('[PoliciesService] Failed to fetch policies from API, falling back to mock:', err);
+      }
+    }
     return Promise.resolve([...this.policies]);
   }
 
   async getPolicyById(id: string): Promise<Policy | undefined> {
-    // Simulates GET /api/policies/:id
-    return Promise.resolve(this.policies.find(p => p.id === id));
+    if (!this.isMockMode()) {
+      try {
+        const response = await apiClient.get<{ data: Policy }>(`/policies/${id}`);
+        return response.data;
+      } catch (err) {
+        console.warn(`[PoliciesService] Failed to fetch policy ${id} from API, falling back to mock:`, err);
+      }
+    }
+    return Promise.resolve(this.policies.find((p) => p.id === id));
   }
 
   async createPolicy(policyData: Partial<Policy>): Promise<Policy> {
-    // Simulates POST /api/policies
+    if (!this.isMockMode()) {
+      try {
+        const response = await apiClient.post<{ data: Policy }>('/policies', policyData);
+        return response.data;
+      } catch (err) {
+        console.warn('[PoliciesService] Failed to create policy on API, saving locally:', err);
+      }
+    }
+
     const newPolicy: Policy = {
       id: `pol-${Date.now()}`,
       name: policyData.name || 'Custom Safety Policy',
@@ -35,8 +62,16 @@ class PoliciesService {
   }
 
   async updatePolicy(id: string, updates: Partial<Policy>): Promise<Policy | undefined> {
-    // Simulates PUT /api/policies/:id
-    const index = this.policies.findIndex(p => p.id === id);
+    if (!this.isMockMode()) {
+      try {
+        const response = await apiClient.put<{ data: Policy }>(`/policies/${id}`, updates);
+        return response.data;
+      } catch (err) {
+        console.warn(`[PoliciesService] Failed to update policy ${id} on API, updating locally:`, err);
+      }
+    }
+
+    const index = this.policies.findIndex((p) => p.id === id);
     if (index !== -1) {
       this.policies[index] = {
         ...this.policies[index],
@@ -51,27 +86,32 @@ class PoliciesService {
   }
 
   async addRule(policyId: string, rule: Omit<PolicyRule, 'id'>): Promise<Policy | undefined> {
-    const policy = this.policies.find(p => p.id === policyId);
+    const policy = await this.getPolicyById(policyId);
     if (policy) {
       const newRule: PolicyRule = {
         ...rule,
         id: `rule-${Date.now()}`,
       };
-      policy.rules.push(newRule);
-      policy.rulesCount = policy.rules.length;
-      policy.lastUpdatedAt = 'Just now';
-      return Promise.resolve({ ...policy });
+      const updatedRules = [...policy.rules, newRule];
+      return this.updatePolicy(policyId, { rules: updatedRules });
     }
     return Promise.resolve(undefined);
   }
 
   async deleteRule(policyId: string, ruleId: string): Promise<Policy | undefined> {
-    const policy = this.policies.find(p => p.id === policyId);
+    const policy = await this.getPolicyById(policyId);
     if (policy) {
-      policy.rules = policy.rules.filter(r => r.id !== ruleId);
-      policy.rulesCount = policy.rules.length;
-      policy.lastUpdatedAt = 'Just now';
-      return Promise.resolve({ ...policy });
+      const updatedRules = policy.rules.filter((r) => r.id !== ruleId);
+      return this.updatePolicy(policyId, { rules: updatedRules });
+    }
+    return Promise.resolve(undefined);
+  }
+
+  async toggleRule(policyId: string, ruleId: string): Promise<Policy | undefined> {
+    const policy = await this.getPolicyById(policyId);
+    if (policy) {
+      const updatedRules = policy.rules.map((r) => (r.id === ruleId ? { ...r, enabled: !r.enabled } : r));
+      return this.updatePolicy(policyId, { rules: updatedRules });
     }
     return Promise.resolve(undefined);
   }

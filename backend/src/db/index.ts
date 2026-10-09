@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs';
 import { config } from '../config/env.js';
 import { ServiceNode, DependencyEdge } from '../services/blastRadius.js';
 import { HistoricalRecord } from '../services/historicalSimilarity.js';
+import { Policy, PolicyRule, PolicyVersion, AuditEvent, Deployment, DeploymentStatus, Incident } from '../types/shared.js';
 
 export interface DbUser {
   id: string;
@@ -123,12 +124,15 @@ export interface DbChange {
     suggestedAction: 'APPROVE_POLICY' | 'MODIFY_POLICY' | 'BLOCK';
     approvedBy?: string;
     approvedAt?: string;
+    secondApproverId?: string;
+    secondApprovedAt?: string;
   };
   filesChangedCount: number;
   additions: number;
   deletions: number;
   status:
     | 'AWAITING_REVIEW'
+    | 'AWAITING_SECOND_APPROVAL'
     | 'APPROVED'
     | 'POLICY_BLOCKED'
     | 'CANARY_RECOMMENDED'
@@ -168,6 +172,11 @@ class Database {
   public services: Map<string, ServiceNode> = new Map();
   public dependencies: DependencyEdge[] = [];
   public history: HistoricalRecord[] = [];
+  public policies: Policy[] = [];
+  public policyVersions: PolicyVersion[] = [];
+  public auditEvents: AuditEvent[] = [];
+  public deployments: Deployment[] = [];
+  public incidents: Incident[] = [];
 
   constructor() {
     this.initDefaultSeed();
@@ -238,6 +247,18 @@ class Database {
         updated_at: now,
       },
       {
+        id: 'usr-sre-02',
+        organization_id: orgId,
+        name: 'Jordan Hayes (SRE)',
+        email: 'sre2@acme.corp',
+        password_hash: defaultPasswordHash,
+        role: 'SRE',
+        is_active: true,
+        sso_subject: null,
+        created_at: now,
+        updated_at: now,
+      },
+      {
         id: 'usr-dev-01',
         organization_id: orgId,
         name: 'Dev Dave (Developer)',
@@ -278,7 +299,6 @@ class Database {
       },
     ];
 
-    // Services Catalog Seed
     this.services = new Map([
       ['svc-checkout-01', { id: 'svc-checkout-01', name: 'checkout-service', tier: 'TIER_1', health: 'HEALTHY', currentErrorRate: '0.04%' }],
       ['svc-payment-01', { id: 'svc-payment-01', name: 'payment-gateway', tier: 'TIER_1', health: 'HEALTHY', currentErrorRate: '0.02%' }],
@@ -328,7 +348,6 @@ class Database {
       },
     ];
 
-    // Seed default change: PR #1824
     this.changes = [
       {
         id: 'pr-1824',
@@ -464,6 +483,283 @@ class Database {
             ],
           },
         ],
+      },
+    ];
+
+    // Seed Policies
+    this.policies = [
+      {
+        id: 'pol-prod-safety',
+        organizationId: orgId,
+        name: 'Production Safety Policy',
+        description: 'Enforces automated risk thresholds, mandatory canary progression, and telemetry-triggered rollback triggers.',
+        environment: 'PRODUCTION',
+        tierScope: 'ALL',
+        status: 'ACTIVE',
+        rulesCount: 4,
+        rules: [
+          {
+            id: 'rule-1',
+            conditionName: 'High Risk Human Approval Gate',
+            field: 'risk_score',
+            operator: '>',
+            thresholdValue: 80,
+            unit: 'Score',
+            action: 'REQUIRE_HUMAN_APPROVAL',
+            actionDescription: 'Require explicit signoff before initiating production traffic.',
+            enabled: true,
+          },
+          {
+            id: 'rule-2',
+            conditionName: 'Elevated Risk Canary Mandate',
+            field: 'risk_score',
+            operator: '>',
+            thresholdValue: 60,
+            unit: 'Score',
+            action: 'REQUIRE_CANARY',
+            actionDescription: 'Require multi-stage canary (5% → 25% → 50% → 100%) with minimum 10m verification.',
+            enabled: true,
+          },
+          {
+            id: 'rule-3',
+            conditionName: 'Telemetry Anomaly Pause Threshold',
+            field: 'error_rate',
+            operator: '>',
+            thresholdValue: 2.0,
+            unit: '%',
+            action: 'PAUSE_ROLLOUT',
+            actionDescription: 'Immediately pause traffic progression and alert on-call engineer.',
+            enabled: true,
+          },
+          {
+            id: 'rule-4',
+            conditionName: 'Critical Breach Automated Rollback',
+            field: 'error_rate',
+            operator: '>',
+            thresholdValue: 5.0,
+            unit: '%',
+            action: 'ROLLBACK_DEPLOYMENT',
+            actionDescription: 'Instantly execute automated rollback to previous known-good deployment version.',
+            enabled: true,
+          },
+        ],
+        version: 1,
+        lastUpdatedAt: 'Today, 08:30 AM',
+        updatedBy: 'Alex Mercer',
+        owner: 'Platform Engineering Team',
+        enforcementMode: 'ENFORCING',
+      },
+      {
+        id: 'pol-critical-db',
+        organizationId: orgId,
+        name: 'Database Migration Strict Guard',
+        description: 'Blocks pull requests containing destructive un-indexed schema operations or drops.',
+        environment: 'ALL',
+        tierScope: 'CRITICAL_SERVICES',
+        status: 'ACTIVE',
+        rulesCount: 2,
+        rules: [
+          {
+            id: 'rule-db-1',
+            conditionName: 'Block Destructive DDL',
+            field: 'has_db_migration',
+            operator: '==',
+            thresholdValue: 'true',
+            action: 'BLOCK_MERGE',
+            actionDescription: 'Post failure status check on PR if destructive operations are detected.',
+            enabled: true,
+          },
+          {
+            id: 'rule-db-2',
+            conditionName: 'Large Changes Require Off-Peak',
+            field: 'change_size_lines',
+            operator: '>',
+            thresholdValue: 1000,
+            action: 'RESTRICT_OFF_PEAK_ONLY',
+            actionDescription: 'Restrict rollout execution to scheduled maintenance windows.',
+            enabled: true,
+          },
+        ],
+        version: 1,
+        lastUpdatedAt: 'Yesterday',
+        updatedBy: 'Sarah Connor',
+        owner: 'Database Architecture Team',
+        enforcementMode: 'ENFORCING',
+      },
+    ];
+
+    // Seed Initial Audit Events
+    this.auditEvents = [
+      {
+        id: 'aud-101',
+        timestamp: '2026-10-09T08:30:00Z',
+        timeFormatted: '08:30:00',
+        actor: { name: 'ChangeGuard', type: 'POLICY_ENGINE' },
+        action: 'DEPLOYMENT_PAUSED',
+        actionTitle: 'Deployment paused automatically',
+        resource: { type: 'DEPLOYMENT', id: 'dep-checkout-284', name: 'checkout-service (v2.8.4)' },
+        result: 'SUCCESS',
+        source: 'POLICY_ENGINE',
+        details: 'Telemetry threshold breached: HTTP Error Rate increased above policy maximum limit (1.0%).',
+      },
+      {
+        id: 'aud-102',
+        timestamp: '2026-10-09T08:20:00Z',
+        timeFormatted: '08:20:00',
+        actor: { name: 'Alex Mercer', type: 'USER', email: 'platform@acme.corp' },
+        action: 'POLICY_UPDATED',
+        actionTitle: 'Updated Production Safety Policy',
+        resource: { type: 'POLICY', id: 'pol-prod-safety', name: 'Production Safety Policy' },
+        result: 'SUCCESS',
+        source: 'WEB_CONSOLE',
+        details: 'Adjusted error_rate pause threshold from 2.5% to 2.0%.',
+      },
+    ];
+
+    // Seed Initial Deployments
+    this.deployments = [
+      {
+        id: 'dep-checkout-284',
+        organizationId: orgId,
+        serviceId: 'srv-checkout',
+        serviceName: 'Checkout Service',
+        serviceTier: 'TIER_1',
+        version: 'v2.8.4',
+        previousVersion: 'v2.8.3',
+        environment: 'PRODUCTION',
+        status: 'MONITORING',
+        risk: {
+          score: 78,
+          level: 'HIGH',
+        },
+        strategy: 'CANARY',
+        currentTrafficPercentage: 5,
+        targetTrafficPercentage: 5,
+        stages: [5, 25, 50, 100],
+        currentStageIndex: 0,
+        health: 'HEALTHY',
+        changeId: 'pr-1824',
+        changeTitle: 'Optimize checkout query & persist idempotency keys',
+        changeAuthor: 'Alex Morgan',
+        repository: 'acme/checkout-service',
+        commitHash: '7f9c21b',
+        startedAt: new Date(Date.now() - 480000).toISOString(),
+        updatedAt: now,
+        currentTelemetry: {
+          errorRate: 0.04,
+          p95Latency: 182,
+          requestsPerMinute: 12800,
+          cpuUtilization: 42,
+          memoryUtilization: 58,
+        },
+        telemetryHistory: [
+          { timestamp: '10:42', errorRate: 0.03, p95Latency: 175, requestsPerMinute: 11200, cpuUtilization: 40, memoryUtilization: 55, canaryTrafficPercentage: 5 },
+          { timestamp: '10:46', errorRate: 0.04, p95Latency: 182, requestsPerMinute: 12800, cpuUtilization: 42, memoryUtilization: 58, canaryTrafficPercentage: 5 },
+        ],
+        signals: [
+          {
+            id: 'sig-1',
+            name: 'HTTP Error Rate',
+            description: 'Aggregate 5xx response percentage over rolling 5-minute window',
+            metricKey: 'http_error_rate_pct',
+            operator: '<',
+            threshold: 1.0,
+            currentValue: 0.04,
+            unit: '%',
+            status: 'PASSED',
+            evaluatedAt: now,
+          },
+          {
+            id: 'sig-2',
+            name: 'P95 Transaction Latency',
+            description: 'End-to-end checkout execution duration at 95th percentile',
+            metricKey: 'p95_latency_ms',
+            operator: '<',
+            threshold: 500,
+            currentValue: 182,
+            unit: 'ms',
+            status: 'PASSED',
+            evaluatedAt: now,
+          },
+          {
+            id: 'sig-3',
+            name: 'Cluster CPU Utilization',
+            description: 'Cluster pod container CPU quota utilization',
+            metricKey: 'cpu_usage_pct',
+            operator: '<',
+            threshold: 75,
+            currentValue: 42,
+            unit: '%',
+            status: 'PASSED',
+            evaluatedAt: now,
+          },
+        ],
+        timeline: [
+          {
+            id: 'tl-1',
+            timestamp: new Date(Date.now() - 480000).toISOString(),
+            timeFormatted: '8 min ago',
+            title: 'Canary Rollout Initiated (5% Traffic)',
+            description: 'Argo Rollouts configured 5% canary split for v2.8.4.',
+            type: 'INFO',
+            actor: 'Alex Mercer (Platform Eng)',
+          },
+        ],
+      },
+    ];
+
+    // Seed Initial Incidents
+    this.incidents = [
+      {
+        id: 'inc-482',
+        organizationId: orgId,
+        code: 'INC-482',
+        title: 'Checkout Service Canary Latency Breach',
+        severity: 'SEV-2',
+        status: 'CONTAINED',
+        startedAt: new Date(Date.now() - 3600000).toISOString(),
+        resolvedAt: new Date(Date.now() - 1800000).toISOString(),
+        durationFormatted: '30m',
+        affectedServices: ['Checkout Service', 'Payment Service'],
+        relatedDeploymentId: 'dep-checkout-284',
+        relatedDeploymentVersion: 'v2.8.4',
+        relatedChangeId: 'pr-1824',
+        relatedChangeTitle: 'Optimize checkout query & persist idempotency keys',
+        rootCauseAnalysis: {
+          summary: 'Elevated lock contention on checkout_orders table during connection pool warm-up.',
+          triggerMechanism: 'Connection pool starvation triggered synchronous timeouts.',
+          failureContainedBy: 'ChangeGuard Autonomous Verification Engine (Traffic paused at 5%)',
+          preventativeRecommendation: 'Tune max_connections and implement exponential backoff on pool retry.',
+        },
+        metrics: {
+          peakErrorRate: '2.4%',
+          peakP95Latency: '640ms',
+          impactedRequests: 140,
+          impactedUsers: 85,
+        },
+        timeline: [
+          {
+            id: 'tl-inc-1',
+            timestamp: new Date(Date.now() - 3600000).toISOString(),
+            timeFormatted: '1 hr ago',
+            title: 'P95 Latency threshold breached (>500ms)',
+            description: 'P95 latency spiked to 640ms on canary instances.',
+            actor: 'ChangeGuard Verification Engine',
+            isAutomatic: true,
+            type: 'TRIGGER',
+          },
+          {
+            id: 'tl-inc-2',
+            timestamp: new Date(Date.now() - 3550000).toISOString(),
+            timeFormatted: '59 min ago',
+            title: 'Canary Traffic Paused',
+            description: 'Autonomous safety circuit breaker halted progression to prevent user impact.',
+            actor: 'ChangeGuard Autonomous Safety Engine',
+            isAutomatic: true,
+            type: 'ACTION',
+          },
+        ],
+        actionsTaken: ['Autonomous pause executed', 'Pool sizing adjusted', 'Canary resumed after verification'],
       },
     ];
   }
@@ -633,14 +929,38 @@ class Database {
     return change;
   }
 
-  public async approveChange(id: string, approverId: string, orgId: string): Promise<DbChange | null> {
+  public async approveChange(
+    id: string,
+    approverId: string,
+    orgId: string,
+    isSecondApproval = false
+  ): Promise<{ change: DbChange; isFullyApproved: boolean } | null> {
     const change = await this.getChangeById(id, orgId);
     if (!change) return null;
+
+    const requiresTwoPerson = change.risk.score >= 90;
+
+    if (requiresTwoPerson && !isSecondApproval) {
+      change.status = 'AWAITING_SECOND_APPROVAL';
+      change.policyRecommendation.approvedBy = approverId;
+      change.policyRecommendation.approvedAt = new Date().toISOString();
+      change.updatedAt = new Date().toISOString();
+      return { change, isFullyApproved: false };
+    }
+
+    if (isSecondApproval) {
+      change.status = 'APPROVED';
+      change.policyRecommendation.secondApproverId = approverId;
+      change.policyRecommendation.secondApprovedAt = new Date().toISOString();
+      change.updatedAt = new Date().toISOString();
+      return { change, isFullyApproved: true };
+    }
+
     change.status = 'APPROVED';
     change.policyRecommendation.approvedBy = approverId;
     change.policyRecommendation.approvedAt = new Date().toISOString();
     change.updatedAt = new Date().toISOString();
-    return change;
+    return { change, isFullyApproved: true };
   }
 
   public getServices(): Map<string, ServiceNode> {
@@ -654,6 +974,278 @@ class Database {
   public getHistory(): HistoricalRecord[] {
     return this.history;
   }
+
+  // --- Policy Queries ---
+  public async listPolicies(orgId: string): Promise<Policy[]> {
+    return this.policies.filter((p) => p.organizationId === orgId);
+  }
+
+  public async getPolicyById(id: string, orgId: string): Promise<Policy | null> {
+    return this.policies.find((p) => p.id === id && p.organizationId === orgId) || null;
+  }
+
+  public async createPolicy(
+    data: Omit<Policy, 'id' | 'version' | 'rulesCount' | 'lastUpdatedAt'>,
+    authorName: string
+  ): Promise<Policy> {
+    const newPolicy: Policy = {
+      ...data,
+      id: `pol-${crypto.randomUUID().slice(0, 8)}`,
+      version: 1,
+      rulesCount: data.rules.length,
+      lastUpdatedAt: new Date().toISOString(),
+      updatedBy: authorName,
+    };
+    this.policies.push(newPolicy);
+    return newPolicy;
+  }
+
+  public async updatePolicy(
+    id: string,
+    updates: Partial<Omit<Policy, 'id' | 'organizationId' | 'version'>>,
+    authorName: string,
+    orgId: string
+  ): Promise<{ policy: Policy; previousVersion: PolicyVersion } | null> {
+    const policy = await this.getPolicyById(id, orgId);
+    if (!policy) return null;
+
+    // Snapshot previous version
+    const prevVersion: PolicyVersion = {
+      id: `ver-${crypto.randomUUID().slice(0, 8)}`,
+      policyId: policy.id,
+      version: policy.version,
+      snapshot: JSON.parse(JSON.stringify(policy)),
+      createdAt: new Date().toISOString(),
+      createdBy: policy.updatedBy,
+    };
+    this.policyVersions.push(prevVersion);
+
+    // Apply updates and increment version
+    const updated: Policy = {
+      ...policy,
+      ...updates,
+      version: policy.version + 1,
+      rulesCount: updates.rules ? updates.rules.length : policy.rules.length,
+      lastUpdatedAt: new Date().toISOString(),
+      updatedBy: authorName,
+    };
+
+    const index = this.policies.findIndex((p) => p.id === id && p.organizationId === orgId);
+    this.policies[index] = updated;
+
+    return { policy: updated, previousVersion: prevVersion };
+  }
+
+  public async getPolicyVersions(policyId: string): Promise<PolicyVersion[]> {
+    return this.policyVersions.filter((v) => v.policyId === policyId).sort((a, b) => b.version - a.version);
+  }
+
+  // --- Audit Queries ---
+  public async appendAuditEvent(event: AuditEvent): Promise<void> {
+    this.auditEvents.unshift(event);
+  }
+
+  public async listAuditEvents(
+    orgId: string,
+    filters?: {
+      action?: string;
+      actor?: string;
+      resourceType?: string;
+      result?: string;
+      page?: number;
+      limit?: number;
+    }
+  ): Promise<{ data: AuditEvent[]; total: number }> {
+    let items = [...this.auditEvents];
+
+    if (filters?.action) {
+      items = items.filter((e) => e.action === filters.action);
+    }
+    if (filters?.actor) {
+      items = items.filter((e) => e.actor.name.toLowerCase().includes(filters.actor!.toLowerCase()));
+    }
+    if (filters?.resourceType) {
+      items = items.filter((e) => e.resource.type === filters.resourceType);
+    }
+    if (filters?.result) {
+      items = items.filter((e) => e.result === filters.result);
+    }
+
+    const total = items.length;
+    const page = filters?.page || 1;
+    const limit = filters?.limit || 20;
+    const paginated = items.slice((page - 1) * limit, page * limit);
+
+    return { data: paginated, total };
+  }
+
+  public async exportAuditCsv(orgId: string): Promise<string> {
+    const headers = ['"ID"', '"Timestamp"', '"Actor Name"', '"Actor Type"', '"Action"', '"Resource Type"', '"Resource Name"', '"Result"', '"Source"', '"Details"'];
+    const rows = this.auditEvents.map((e) => [
+      `"${e.id}"`,
+      `"${e.timestamp}"`,
+      `"${e.actor.name}"`,
+      `"${e.actor.type}"`,
+      `"${e.action}"`,
+      `"${e.resource.type}"`,
+      `"${e.resource.name.replace(/"/g, '""')}"`,
+      `"${e.result}"`,
+      `"${e.source}"`,
+      `"${e.details.replace(/"/g, '""')}"`,
+    ]);
+    return [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
+  }
+
+  // --- Progressive Deployment Queries ---
+  public async listDeployments(
+    orgId: string,
+    filters?: { environment?: string; status?: string; serviceId?: string }
+  ): Promise<Deployment[]> {
+    let list = this.deployments.filter((d) => d.organizationId === orgId);
+    if (filters?.environment) {
+      list = list.filter((d) => d.environment === filters.environment);
+    }
+    if (filters?.status) {
+      list = list.filter((d) => d.status === filters.status);
+    }
+    if (filters?.serviceId) {
+      list = list.filter((d) => d.serviceId === filters.serviceId);
+    }
+    return list;
+  }
+
+  public async getDeploymentById(id: string): Promise<Deployment | null> {
+    return this.deployments.find((d) => d.id === id || d.serviceId === id) || null;
+  }
+
+  public async createDeployment(
+    data: Omit<Deployment, 'id' | 'startedAt' | 'updatedAt' | 'timeline' | 'telemetryHistory'>
+  ): Promise<Deployment> {
+    const now = new Date().toISOString();
+    const id = `dep-${data.serviceName.toLowerCase().replace(/[^a-z0-9]/g, '-')}-${Math.floor(100 + Math.random() * 900)}`;
+    const dep: Deployment = {
+      ...data,
+      id,
+      startedAt: now,
+      updatedAt: now,
+      telemetryHistory: [],
+      timeline: [
+        {
+          id: `tl-${Date.now()}`,
+          timestamp: now,
+          timeFormatted: 'Just now',
+          title: `Rollout Initiated (${data.currentTrafficPercentage}% Traffic)`,
+          description: `Rollout created for ${data.serviceName} ${data.version}.`,
+          type: 'INFO',
+          actor: data.changeAuthor || 'ChangeGuard System',
+        },
+      ],
+    };
+    this.deployments.unshift(dep);
+    return dep;
+  }
+
+  public async updateDeploymentState(
+    id: string,
+    targetStatus: DeploymentStatus,
+    updates?: Partial<Deployment> & { expectedStatus?: DeploymentStatus }
+  ): Promise<Deployment> {
+    const dep = this.deployments.find((d) => d.id === id);
+    if (!dep) {
+      const err = new Error(`Deployment ${id} not found`);
+      (err as any).statusCode = 404;
+      (err as any).code = 'NOT_FOUND';
+      throw err;
+    }
+
+    // Optimistic concurrency check: if caller expected a specific status and it changed
+    if (updates?.expectedStatus && dep.status !== updates.expectedStatus) {
+      const err = new Error(`State conflict: deployment ${id} is in status ${dep.status}, expected ${updates.expectedStatus}`);
+      (err as any).statusCode = 409;
+      (err as any).code = 'STATE_CONFLICT';
+      throw err;
+    }
+
+    // Concurrency guard: cannot rollback if already rolled back or rolling back
+    if (targetStatus === 'ROLLING_BACK' || targetStatus === 'ROLLED_BACK') {
+      if (dep.status === 'ROLLED_BACK') {
+        const err = new Error(`Deployment ${id} has already been rolled back.`);
+        (err as any).statusCode = 409;
+        (err as any).code = 'STATE_CONFLICT';
+        throw err;
+      }
+    }
+
+    dep.status = targetStatus;
+    dep.updatedAt = new Date().toISOString();
+    if (updates) {
+      const { expectedStatus, ...rest } = updates;
+      Object.assign(dep, rest);
+    }
+
+    return dep;
+  }
+
+  // --- Incident Queries ---
+  public async listIncidents(orgId: string): Promise<Incident[]> {
+    return this.incidents.filter((inc) => inc.organizationId === orgId);
+  }
+
+  public async getIncidentById(id: string): Promise<Incident | null> {
+    return this.incidents.find((inc) => inc.id === id || inc.code === id) || null;
+  }
+
+  public async createIncident(data: any): Promise<Incident> {
+    const now = new Date().toISOString();
+    const id = `inc-${Date.now()}-${Math.floor(100 + Math.random() * 900)}`;
+    const code = data.code || `INC-${Math.floor(100 + Math.random() * 900)}`;
+    const orgId = data.organizationId || data.organization_id || 'org-acme-primary-01';
+
+    const incident: Incident = {
+      id,
+      organizationId: orgId,
+      code,
+      title: data.title,
+      severity: data.severity || 'SEV-2',
+      status: data.status || 'TRIGGERED',
+      startedAt: now,
+      durationFormatted: 'Active (Just now)',
+      affectedServices: data.affectedServices || (data.related_deployment_id ? ['Checkout Service'] : []),
+      relatedDeploymentId: data.relatedDeploymentId || data.related_deployment_id,
+      relatedDeploymentVersion: data.relatedDeploymentVersion || 'v2.8.4',
+      relatedChangeId: data.relatedChangeId || data.related_change_id,
+      relatedChangeTitle: data.relatedChangeTitle,
+      rootCauseAnalysis: {
+        summary: data.rca_summary || data.rootCauseAnalysis?.summary || data.title,
+        triggerMechanism: data.rca_trigger || data.rootCauseAnalysis?.triggerMechanism || 'Telemetry threshold breach',
+        failureContainedBy: data.rca_contained_by || data.rootCauseAnalysis?.failureContainedBy || 'ChangeGuard Autonomous Engine',
+        preventativeRecommendation: data.rca_recommendation || data.rootCauseAnalysis?.preventativeRecommendation || 'Review and run remediation.',
+      },
+      metrics: {
+        peakErrorRate: data.peak_error_rate || data.metrics?.peakErrorRate || '3.8%',
+        peakP95Latency: data.peak_p95_latency || data.metrics?.peakP95Latency || '420ms',
+        impactedRequests: data.impacted_requests || data.metrics?.impactedRequests || 140,
+        impactedUsers: data.impacted_users || data.metrics?.impactedUsers || 85,
+      },
+      timeline: [
+        {
+          id: `tl-inc-${Date.now()}`,
+          timestamp: now,
+          timeFormatted: 'Just now',
+          title: `Incident Triggered: ${data.title}`,
+          description: data.rca_summary || 'Autonomous circuit breaker intervened.',
+          actor: 'ChangeGuard Autonomous Engine',
+          isAutomatic: true,
+          type: 'TRIGGER',
+        },
+      ],
+      actionsTaken: ['Autonomous pause executed', 'Incident ticket dispatched to on-call SRE'],
+    };
+
+    this.incidents.unshift(incident);
+    return incident;
+  }
 }
 
 export const db = new Database();
+

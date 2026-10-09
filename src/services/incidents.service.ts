@@ -1,14 +1,35 @@
 import { Incident } from '../types/incident';
 import { mockIncidents } from '../data/mockIncidents';
+import { apiClient } from './apiClient';
 
 class IncidentsService {
   private incidents: Incident[] = [...mockIncidents];
 
+  private isMockMode(): boolean {
+    return import.meta.env.VITE_USE_MOCK_DATA !== 'false';
+  }
+
   async getIncidents(): Promise<Incident[]> {
+    if (!this.isMockMode()) {
+      try {
+        const response = await apiClient.get<{ data: Incident[] }>('/incidents');
+        return response.data;
+      } catch (err) {
+        console.warn('[IncidentsService] Failed to fetch incidents from API, falling back to mock:', err);
+      }
+    }
     return Promise.resolve([...this.incidents]);
   }
 
   async getIncidentById(id: string): Promise<Incident | undefined> {
+    if (!this.isMockMode()) {
+      try {
+        const response = await apiClient.get<{ data: Incident }>(`/incidents/${id}`);
+        return response.data;
+      } catch (err) {
+        console.warn(`[IncidentsService] Failed to fetch incident ${id} from API, falling back to mock:`, err);
+      }
+    }
     return Promise.resolve(
       this.incidents.find(
         inc =>

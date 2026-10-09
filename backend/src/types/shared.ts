@@ -39,7 +39,7 @@ export interface CreateApiKeyRequest {
 
 export interface CreateApiKeyResponse {
   key: ApiKey;
-  secret: string; // Plaintext token returned only once upon creation
+  secret: string;
 }
 
 export interface LoginRequest {
@@ -141,3 +141,224 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly PermissionAction[]> = {
     'APPROVE_POLICY',
   ],
 };
+
+// --- Policies Domain Models ---
+export type PolicyAction =
+  | 'REQUIRE_HUMAN_APPROVAL'
+  | 'REQUIRE_CANARY'
+  | 'PAUSE_ROLLOUT'
+  | 'ROLLBACK_DEPLOYMENT'
+  | 'BLOCK_MERGE'
+  | 'RESTRICT_OFF_PEAK_ONLY';
+
+export interface PolicyRule {
+  id: string;
+  conditionName: string;
+  field: string;
+  operator: '>' | '<' | '>=' | '<=' | '==' | 'contains';
+  thresholdValue: string | number;
+  unit?: string;
+  action: PolicyAction;
+  actionDescription: string;
+  enabled: boolean;
+}
+
+export interface Policy {
+  id: string;
+  organizationId: string;
+  name: string;
+  description: string;
+  environment: 'PRODUCTION' | 'STAGING' | 'ALL';
+  tierScope: 'ALL' | 'TIER_1_ONLY' | 'CRITICAL_SERVICES';
+  status: 'ACTIVE' | 'DRAFT' | 'PAUSED';
+  rulesCount: number;
+  rules: PolicyRule[];
+  version: number;
+  lastUpdatedAt: string;
+  updatedBy: string;
+  owner: string;
+  enforcementMode: 'ENFORCING' | 'DRY_RUN';
+}
+
+export interface PolicyVersion {
+  id: string;
+  policyId: string;
+  version: number;
+  snapshot: Policy;
+  createdAt: string;
+  createdBy: string;
+}
+
+// --- Audit Events Domain Models ---
+export type AuditActionType =
+  | 'DEPLOYMENT_STARTED'
+  | 'DEPLOYMENT_PROMOTED'
+  | 'DEPLOYMENT_PAUSED'
+  | 'ROLLBACK_EXECUTED'
+  | 'POLICY_CREATED'
+  | 'POLICY_UPDATED'
+  | 'POLICY_ENFORCED'
+  | 'CHANGE_BLOCKED'
+  | 'APPROVAL_GRANTED'
+  | 'APPROVAL_REQUESTED'
+  | 'INTEGRATION_CONFIGURED'
+  | 'SIMULATION_TRIGGERED';
+
+export interface AuditEvent {
+  id: string;
+  timestamp: string;
+  timeFormatted: string;
+  actor: {
+    name: string;
+    type: 'USER' | 'SYSTEM' | 'POLICY_ENGINE' | 'AI_AGENT';
+    email?: string;
+  };
+  action: AuditActionType;
+  actionTitle: string;
+  resource: {
+    type: 'SERVICE' | 'DEPLOYMENT' | 'CHANGE' | 'POLICY' | 'INTEGRATION' | 'USER' | 'SETTING';
+    id: string;
+    name: string;
+  };
+  result: 'SUCCESS' | 'WARNING' | 'FAILED';
+  source: 'WEB_CONSOLE' | 'POLICY_ENGINE' | 'GITHUB_WEBHOOK' | 'ARGO_CONTROLLER' | 'SIMULATION_CONTROLLER';
+  details: string;
+  metadata?: Record<string, any>;
+}
+
+// --- Progressive Deployment & Telemetry Domain Models ---
+export type DeploymentStatus =
+  | 'QUEUED'
+  | 'MONITORING'
+  | 'PROMOTING'
+  | 'PROMOTED'
+  | 'PAUSED'
+  | 'ROLLING_BACK'
+  | 'ROLLED_BACK'
+  | 'FAILED'
+  | 'ABORTED';
+
+export type RolloutStrategy = 'CANARY' | 'BLUE_GREEN' | 'ROLLING' | 'STAGED';
+
+export interface VerificationSignal {
+  id: string;
+  name: string;
+  description: string;
+  metricKey: string;
+  operator: '<' | '>' | '<=' | '>=';
+  threshold: number;
+  currentValue: number;
+  unit: string;
+  status: 'PASSED' | 'WARNING' | 'FAILED';
+  evaluatedAt: string;
+}
+
+export interface DeploymentTimelineEvent {
+  id: string;
+  timestamp: string;
+  timeFormatted: string;
+  title: string;
+  description: string;
+  type: 'INFO' | 'SUCCESS' | 'WARNING' | 'DANGER' | 'SYSTEM';
+  actor?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface LiveTelemetrySnapshot {
+  timestamp: string;
+  errorRate: number; // %
+  p95Latency: number; // ms
+  requestsPerMinute: number;
+  cpuUtilization: number; // %
+  memoryUtilization: number; // %
+  canaryTrafficPercentage: number; // %
+}
+
+export interface Deployment {
+  id: string;
+  organizationId: string;
+  serviceId: string;
+  serviceName: string;
+  serviceTier: 'TIER_1' | 'TIER_2' | 'TIER_3';
+  version: string;
+  previousVersion: string;
+  environment: 'PRODUCTION' | 'STAGING' | 'DEVELOPMENT';
+  status: DeploymentStatus;
+  risk: {
+    score: number;
+    level: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  };
+  strategy: RolloutStrategy;
+  currentTrafficPercentage: number; // 0-100
+  targetTrafficPercentage: number;
+  stages: number[]; // [5, 25, 50, 100]
+  currentStageIndex: number;
+  health: 'HEALTHY' | 'WARNING' | 'DEGRADED' | 'CRITICAL';
+  changeId: string;
+  changeTitle: string;
+  changeAuthor: string;
+  repository: string;
+  commitHash: string;
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  pausedReason?: string;
+  rollbackReason?: string;
+  currentTelemetry: {
+    errorRate: number;
+    p95Latency: number;
+    requestsPerMinute: number;
+    cpuUtilization: number;
+    memoryUtilization: number;
+  };
+  telemetryHistory: LiveTelemetrySnapshot[];
+  signals: VerificationSignal[];
+  timeline: DeploymentTimelineEvent[];
+}
+
+// --- Incident Domain Models ---
+export type IncidentSeverity = 'SEV-1' | 'SEV-2' | 'SEV-3' | 'SEV-4';
+export type IncidentStatus = 'TRIGGERED' | 'INVESTIGATING' | 'MITIGATING' | 'CONTAINED' | 'RESOLVED';
+
+export interface IncidentTimelineItem {
+  id: string;
+  timestamp: string;
+  timeFormatted: string;
+  title: string;
+  description: string;
+  actor: string;
+  isAutomatic: boolean;
+  type: 'TRIGGER' | 'ACTION' | 'MITIGATION' | 'ROLLBACK' | 'RESOLVE';
+}
+
+export interface Incident {
+  id: string;
+  organizationId: string;
+  code: string; // e.g. "INC-482"
+  title: string;
+  severity: IncidentSeverity;
+  status: IncidentStatus;
+  startedAt: string;
+  resolvedAt?: string;
+  durationFormatted: string;
+  affectedServices: string[];
+  relatedDeploymentId?: string;
+  relatedDeploymentVersion?: string;
+  relatedChangeId?: string;
+  relatedChangeTitle?: string;
+  rootCauseAnalysis: {
+    summary: string;
+    triggerMechanism: string;
+    failureContainedBy: string;
+    preventativeRecommendation: string;
+  };
+  metrics: {
+    peakErrorRate: string;
+    peakP95Latency: string;
+    impactedRequests: number;
+    impactedUsers: number;
+  };
+  timeline: IncidentTimelineItem[];
+  actionsTaken: string[];
+}
+
