@@ -226,7 +226,7 @@ export const VALID_DEPLOYMENT_TRANSITIONS: Record<DeploymentStatus, readonly Dep
   PAUSED: ['MONITORING', 'ROLLING_BACK', 'ABORTED', 'FAILED'],
   ROLLING_BACK: ['ROLLED_BACK', 'FAILED'],
   ROLLED_BACK: [], // Terminal state
-  PROMOTED: [],    // Terminal state
+  PROMOTED: ['ROLLING_BACK'],
   FAILED: [],      // Terminal state
   ABORTED: [],     // Terminal state
 };

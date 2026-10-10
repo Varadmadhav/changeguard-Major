@@ -208,9 +208,10 @@ export class DeploymentRepository {
     return JSON.parse(JSON.stringify(deployment));
   }
 
-  public async reset(): Promise<void> {
+  public async reset(): Promise<Deployment[]> {
     this.cache = JSON.parse(JSON.stringify(mockDeployments));
     this.persist();
+    return JSON.parse(JSON.stringify(this.cache));
   }
 }
 

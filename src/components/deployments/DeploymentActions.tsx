@@ -8,6 +8,7 @@ interface DeploymentActionsProps {
   deployment: Deployment;
   onPromote: () => void;
   onPause: (reason?: string) => void;
+  onResume?: () => void;
   onRollback: (reason?: string) => void;
 }
 
@@ -15,6 +16,7 @@ export const DeploymentActions: React.FC<DeploymentActionsProps> = ({
   deployment,
   onPromote,
   onPause,
+  onResume,
   onRollback,
 }) => {
   const [showPauseDialog, setShowPauseDialog] = useState(false);
@@ -69,8 +71,8 @@ export const DeploymentActions: React.FC<DeploymentActionsProps> = ({
               variant="secondary"
               size="sm"
               icon={<Play size={14} />}
-              disabled={isRolledBack || isPromoted}
-              onClick={onPromote}
+              disabled={isRolledBack || isPromoted || !isPaused}
+              onClick={onResume || onPromote}
             >
               Resume Progression
             </Button>

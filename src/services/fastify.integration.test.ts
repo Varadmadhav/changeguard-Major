@@ -8,7 +8,7 @@ import http from 'node:http';
 
 describe('Phase 5: Real Backend, Persistence & Fastify Integration Adapter', () => {
   beforeEach(async () => {
-    deploymentsService.resetDeployments();
+    await deploymentsService.resetDeployments();
     deploymentAuditAdapter.clear();
   });
 

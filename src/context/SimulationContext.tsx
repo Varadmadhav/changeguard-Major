@@ -8,6 +8,8 @@ import { mockChanges } from '../data/mockChanges';
 import { mockIncidents } from '../data/mockIncidents';
 import { mockAuditEvents } from '../data/mockAuditEvents';
 import { auditService } from '../services/audit.service';
+import { deploymentsService } from '../services/deployments.service';
+import { deploymentAuditAdapter } from '../services/audit.adapter';
 
 export interface AppNotification {
   id: string;
@@ -34,6 +36,7 @@ interface SimulationContextType {
   simulateFailure: (deploymentId?: string) => void;
   promoteDeployment: (deploymentId: string) => Promise<void>;
   pauseDeployment: (deploymentId: string, reason?: string) => Promise<void>;
+  resumeDeployment: (deploymentId: string) => Promise<void>;
   rollbackDeployment: (deploymentId: string, reason?: string) => Promise<void>;
   approveChangePolicy: (changeId: string) => Promise<void>;
   markNotificationAsRead: (id: string) => void;
@@ -86,6 +89,24 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
   const [currentEnvironment, setCurrentEnvironment] = useState<'PRODUCTION' | 'STAGING' | 'DEVELOPMENT'>('PRODUCTION');
   const [isSimulatingFailure, setIsSimulatingFailure] = useState(false);
 
+  // Initialize and load persistent deployment state from deploymentsService on mount
+  useEffect(() => {
+    let mounted = true;
+    deploymentsService
+      .getDeployments()
+      .then(loaded => {
+        if (mounted && loaded && loaded.length > 0) {
+          setDeployments(loaded);
+        }
+      })
+      .catch(() => {
+        // Safe fallback to mockDeployments on any storage error
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
   const addNotification = (notif: Omit<AppNotification, 'id' | 'timestamp' | 'read'>) => {
     const newNotif: AppNotification = {
       ...notif,
@@ -106,60 +127,18 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
 
   const simulateFailure = (deploymentId: string = 'dep-checkout-284') => {
     setIsSimulatingFailure(true);
-    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-    setDeployments(prev =>
-      prev.map(dep => {
-        if (dep.id === deploymentId) {
-          const updatedTelemetry = {
-            ...dep.currentTelemetry,
-            errorRate: 3.7,
-            p95Latency: 840,
-            cpuUtilization: 78,
-          };
-
-          const updatedSignals = dep.signals.map(s => {
-            if (s.metricKey === 'http_error_rate') return { ...s, currentValue: 3.7, status: 'FAILED' as const };
-            if (s.metricKey === 'p95_latency') return { ...s, currentValue: 840, status: 'FAILED' as const };
-            if (s.metricKey === 'cpu_usage') return { ...s, currentValue: 78, status: 'WARNING' as const };
-            return s;
-          });
-
-          const newTimelineItem = {
-            id: `tl-${Date.now()}`,
-            timestamp: new Date().toISOString(),
-            timeFormatted: nowTime,
-            title: 'CRITICAL: Error Rate Spiked to 3.7%',
-            description: 'Threshold exceeded (< 1.0%). Autonomous policy triggered: Traffic paused at 42%.',
-            type: 'DANGER' as const,
-            actor: 'ChangeGuard Verification Engine',
-          };
-
-          return {
-            ...dep,
-            status: 'PAUSED',
-            health: 'CRITICAL',
-            pausedReason: 'Error rate (3.7%) exceeded production threshold (< 1.0%).',
-            currentTelemetry: updatedTelemetry,
-            signals: updatedSignals,
-            timeline: [newTimelineItem, ...dep.timeline],
-            telemetryHistory: [
-              ...dep.telemetryHistory,
-              {
-                timestamp: nowTime,
-                errorRate: 3.7,
-                p95Latency: 840,
-                requestsPerMinute: 13400,
-                cpuUtilization: 78,
-                memoryUtilization: 72,
-                canaryTrafficPercentage: dep.currentTrafficPercentage,
-              },
-            ],
-          };
+    // Delegate business logic & persistence to deploymentsService
+    deploymentsService
+      .simulateFailure(deploymentId)
+      .then(updated => {
+        if (updated) {
+          setDeployments(prev => prev.map(d => (d.id === updated.id ? updated : d)));
         }
-        return dep;
       })
-    );
+      .catch(() => {
+        // Fall back gracefully
+      });
 
     // Add High Priority Notification
     addNotification({
@@ -187,174 +166,156 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
   };
 
   const rollbackDeployment = async (deploymentId: string, reason: string = 'Error rate exceeded production threshold') => {
-    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    try {
+      const rolledBack = await deploymentsService.rollbackDeployment(deploymentId, reason);
+      if (rolledBack) {
+        setDeployments(prev => prev.map(d => (d.id === rolledBack.id ? rolledBack : d)));
+        setIsSimulatingFailure(false);
 
-    setDeployments(prev =>
-      prev.map(dep => {
-        if (dep.id === deploymentId) {
-          const rolledBackTelemetry = {
-            errorRate: 0.08,
-            p95Latency: 160,
-            requestsPerMinute: 12400,
-            cpuUtilization: 44,
-            memoryUtilization: 58,
-          };
+        // Add Notification
+        addNotification({
+          title: 'ROLLBACK EXECUTED SUCCESSFULLY',
+          message: `${rolledBack.serviceName} safely rolled back to ${rolledBack.version}. Error rate normalized to ${rolledBack.currentTelemetry.errorRate}%.`,
+          type: 'INFO',
+          link: `/deployments/${deploymentId}`,
+          actionText: 'View Audit Details',
+        });
 
-          const resetSignals = dep.signals.map(s => ({
-            ...s,
-            status: 'PASSED' as const,
-            currentValue: s.metricKey === 'http_error_rate' ? 0.08 : s.metricKey === 'p95_latency' ? 160 : s.currentValue,
-          }));
-
-          const newTimelineItem = {
-            id: `tl-${Date.now()}`,
-            timestamp: new Date().toISOString(),
-            timeFormatted: nowTime,
-            title: `Automated Rollback to ${dep.previousVersion} Completed`,
-            description: `Traffic immediately reverted to baseline ${dep.previousVersion}. Blast radius safely contained.`,
-            type: 'DANGER' as const,
-            actor: 'ChangeGuard Rollback Controller',
-          };
-
-          return {
-            ...dep,
-            version: dep.previousVersion,
-            status: 'ROLLED_BACK',
-            health: 'HEALTHY',
-            currentTrafficPercentage: 0,
-            targetTrafficPercentage: 0,
-            rollbackReason: reason,
-            currentTelemetry: rolledBackTelemetry,
-            signals: resetSignals,
-            timeline: [newTimelineItem, ...dep.timeline],
-            updatedAt: 'Just now',
-            completedAt: 'Just now',
-          };
-        }
-        return dep;
-      })
-    );
-
-    setIsSimulatingFailure(false);
-
-    // Add Notification
-    addNotification({
-      title: 'ROLLBACK EXECUTED SUCCESSFULLY',
-      message: `Checkout Service safely rolled back to v2.8.3. Error rate normalized to 0.08%.`,
-      type: 'INFO',
-      link: `/deployments/${deploymentId}`,
-      actionText: 'View Audit Details',
-    });
-
-    // Audit Log Entry
-    const newAuditEvent: AuditEvent = {
-      id: `aud-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      actor: { name: 'Alex Morgan', type: 'USER', email: 'alex.morgan@acme.com' },
-      action: 'ROLLBACK_EXECUTED',
-      actionTitle: 'Operator Triggered Rollback',
-      resource: { type: 'DEPLOYMENT', id: deploymentId, name: 'checkout-service (v2.9.0 → v2.8.3)' },
-      result: 'SUCCESS',
-      source: 'WEB_CONSOLE',
-      details: `Operator initiated rollback. Reason: ${reason}. Restored baseline traffic in 14s.`,
-    };
-    setAuditEvents(prev => [newAuditEvent, ...prev]);
+        // Audit Log Entry
+        const newAuditEvent: AuditEvent = {
+          id: `aud-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          actor: { name: 'Alex Morgan', type: 'USER', email: 'alex.morgan@acme.com' },
+          action: 'ROLLBACK_EXECUTED',
+          actionTitle: 'Operator Triggered Rollback',
+          resource: { type: 'DEPLOYMENT', id: deploymentId, name: `${rolledBack.serviceName} (${rolledBack.version})` },
+          result: 'SUCCESS',
+          source: 'WEB_CONSOLE',
+          details: `Operator initiated rollback. Reason: ${reason}. Restored baseline traffic in 14s.`,
+        };
+        setAuditEvents(prev => [newAuditEvent, ...prev]);
+      }
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'State transition forbidden or repository failure.';
+      console.error(`Rollback failed for deployment ${deploymentId}:`, err);
+      addNotification({
+        title: 'ROLLBACK FAILED',
+        message: `Rollback could not be executed: ${errorMsg}`,
+        type: 'WARNING',
+        link: `/deployments/${deploymentId}`,
+      });
+      throw err;
+    }
   };
 
   const promoteDeployment = async (deploymentId: string) => {
-    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    try {
+      const updated = await deploymentsService.promoteDeployment(deploymentId);
+      if (updated) {
+        setDeployments(prev => prev.map(d => (d.id === updated.id ? updated : d)));
 
-    setDeployments(prev =>
-      prev.map(dep => {
-        if (dep.id === deploymentId) {
-          const stages = dep.stages;
-          const nextIdx = Math.min(dep.currentStageIndex + 1, stages.length - 1);
-          const targetTraffic = stages[nextIdx];
-          const isFull = targetTraffic === 100;
+        addNotification({
+          title: 'DEPLOYMENT PROMOTED',
+          message: `${updated.serviceName} canary promoted to next stage successfully (${updated.currentTrafficPercentage}%).`,
+          type: 'SUCCESS',
+          link: `/deployments/${deploymentId}`,
+          actionText: 'View Rollout',
+        });
 
-          const newTimelineItem = {
-            id: `tl-${Date.now()}`,
-            timestamp: new Date().toISOString(),
-            timeFormatted: nowTime,
-            title: isFull ? 'Deployment 100% Promoted' : `Promoted Traffic to ${targetTraffic}%`,
-            description: isFull ? 'Full rollout reached successfully.' : `Advanced to stage ${nextIdx + 1} (${targetTraffic}%).`,
-            type: 'SUCCESS' as const,
-            actor: 'Alex Morgan (Operator)',
-          };
+        const newAuditEvent: AuditEvent = {
+          id: `aud-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          actor: { name: 'Alex Morgan', type: 'USER', email: 'alex.morgan@acme.com' },
+          action: 'DEPLOYMENT_PROMOTED',
+          actionTitle: 'Operator Promoted Canary Stage',
+          resource: { type: 'DEPLOYMENT', id: deploymentId, name: updated.serviceName },
+          result: 'SUCCESS',
+          source: 'WEB_CONSOLE',
+          details: `Operator promoted canary traffic to stage ${updated.currentTrafficPercentage}%.`,
+        };
+        setAuditEvents(prev => [newAuditEvent, ...prev]);
+      }
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Canary promotion failed.';
+      console.error(`Promotion failed for deployment ${deploymentId}:`, err);
+      addNotification({
+        title: 'PROMOTION FAILED',
+        message: `Could not promote deployment: ${errorMsg}`,
+        type: 'WARNING',
+        link: `/deployments/${deploymentId}`,
+      });
+      throw err;
+    }
+  };
 
-          return {
-            ...dep,
-            currentTrafficPercentage: targetTraffic,
-            targetTrafficPercentage: targetTraffic,
-            currentStageIndex: nextIdx,
-            status: isFull ? 'PROMOTED' : 'MONITORING',
-            health: 'HEALTHY',
-            timeline: [newTimelineItem, ...dep.timeline],
-            updatedAt: 'Just now',
-          };
-        }
-        return dep;
-      })
-    );
+  const resumeDeployment = async (deploymentId: string) => {
+    try {
+      const updated = await deploymentsService.resumeDeployment(deploymentId);
+      if (updated) {
+        setDeployments(prev => prev.map(d => (d.id === updated.id ? updated : d)));
 
-    addNotification({
-      title: 'DEPLOYMENT PROMOTED',
-      message: `Checkout Service canary promoted to next stage successfully.`,
-      type: 'SUCCESS',
-      link: `/deployments/${deploymentId}`,
-      actionText: 'View Rollout',
-    });
+        addNotification({
+          title: 'ROLLOUT RESUMED',
+          message: `${updated.serviceName} rollout monitoring and progression resumed.`,
+          type: 'SUCCESS',
+          link: `/deployments/${deploymentId}`,
+          actionText: 'View Rollout',
+        });
 
-    const newAuditEvent: AuditEvent = {
-      id: `aud-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      actor: { name: 'Alex Morgan', type: 'USER', email: 'alex.morgan@acme.com' },
-      action: 'DEPLOYMENT_PROMOTED',
-      actionTitle: 'Operator Promoted Canary Stage',
-      resource: { type: 'DEPLOYMENT', id: deploymentId, name: 'checkout-service' },
-      result: 'SUCCESS',
-      source: 'WEB_CONSOLE',
-      details: 'Operator confirmed verification telemetry and promoted canary traffic.',
-    };
-    setAuditEvents(prev => [newAuditEvent, ...prev]);
+        const newAuditEvent: AuditEvent = {
+          id: `aud-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          actor: { name: 'Alex Morgan', type: 'USER', email: 'alex.morgan@acme.com' },
+          action: 'DEPLOYMENT_RESUMED' as any,
+          actionTitle: 'Operator Resumed Rollout',
+          resource: { type: 'DEPLOYMENT', id: deploymentId, name: updated.serviceName },
+          result: 'SUCCESS',
+          source: 'WEB_CONSOLE',
+          details: 'Operator resumed rollout progression following pause inspection.',
+        };
+        setAuditEvents(prev => [newAuditEvent, ...prev]);
+      }
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Resume transition forbidden.';
+      console.error(`Resume failed for deployment ${deploymentId}:`, err);
+      addNotification({
+        title: 'RESUME FAILED',
+        message: `Could not resume deployment: ${errorMsg}`,
+        type: 'WARNING',
+        link: `/deployments/${deploymentId}`,
+      });
+      throw err;
+    }
   };
 
   const pauseDeployment = async (deploymentId: string, reason: string = 'Operator manual pause') => {
-    const nowTime = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    try {
+      const updated = await deploymentsService.pauseDeployment(deploymentId, reason);
+      if (updated) {
+        setDeployments(prev => prev.map(d => (d.id === updated.id ? updated : d)));
 
-    setDeployments(prev =>
-      prev.map(dep => {
-        if (dep.id === deploymentId) {
-          const newTimelineItem = {
-            id: `tl-${Date.now()}`,
-            timestamp: new Date().toISOString(),
-            timeFormatted: nowTime,
-            title: 'Deployment Paused by Operator',
-            description: `Manual pause executed. Reason: ${reason}`,
-            type: 'WARNING' as const,
-            actor: 'Alex Morgan',
-          };
-          return {
-            ...dep,
-            status: 'PAUSED',
-            health: 'WARNING',
-            pausedReason: reason,
-            timeline: [newTimelineItem, ...dep.timeline],
-          };
-        }
-        return dep;
-      })
-    );
-
-    addNotification({
-      title: 'DEPLOYMENT PAUSED',
-      message: `Checkout Service rollout paused manually by Alex Morgan.`,
-      type: 'WARNING',
-      link: `/deployments/${deploymentId}`,
-      actionText: 'View Status',
-    });
+        addNotification({
+          title: 'DEPLOYMENT PAUSED',
+          message: `${updated.serviceName} rollout paused manually by Alex Morgan.`,
+          type: 'WARNING',
+          link: `/deployments/${deploymentId}`,
+          actionText: 'View Status',
+        });
+      }
+    } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : 'Pause transition forbidden.';
+      console.error(`Pause failed for deployment ${deploymentId}:`, err);
+      addNotification({
+        title: 'PAUSE FAILED',
+        message: `Could not pause deployment: ${errorMsg}`,
+        type: 'WARNING',
+        link: `/deployments/${deploymentId}`,
+      });
+      throw err;
+    }
   };
 
   const approveChangePolicy = async (changeId: string) => {
@@ -391,7 +352,14 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
   };
 
   const resetSimulationDemo = () => {
-    setDeployments([...mockDeployments]);
+    deploymentsService
+      .resetDeployments()
+      .then(fresh => {
+        setDeployments(fresh);
+      })
+      .catch(() => {
+        setDeployments([...mockDeployments]);
+      });
     setChanges([...mockChanges]);
     setIncidents([...mockIncidents]);
     setAuditEvents([...mockAuditEvents]);
@@ -413,6 +381,7 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
         simulateFailure,
         promoteDeployment,
         pauseDeployment,
+        resumeDeployment,
         rollbackDeployment,
         approveChangePolicy,
         markNotificationAsRead,

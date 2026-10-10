@@ -8,6 +8,7 @@ export function useDeployments() {
     simulateFailure,
     promoteDeployment,
     pauseDeployment,
+    resumeDeployment,
     rollbackDeployment,
     isSimulatingFailure,
     resetSimulationDemo,
@@ -18,6 +19,7 @@ export function useDeployments() {
     simulateFailure,
     promoteDeployment,
     pauseDeployment,
+    resumeDeployment,
     rollbackDeployment,
     isSimulatingFailure,
     resetSimulationDemo,
@@ -30,6 +32,7 @@ export function useDeployment(id: string) {
     simulateFailure,
     promoteDeployment,
     pauseDeployment,
+    resumeDeployment,
     rollbackDeployment,
     isSimulatingFailure,
   } = useSimulation();
@@ -48,6 +51,7 @@ export function useDeployment(id: string) {
     simulateFailure: () => deployment && simulateFailure(deployment.id),
     promote: () => deployment && promoteDeployment(deployment.id),
     pause: (reason?: string) => deployment && pauseDeployment(deployment.id, reason),
+    resume: () => deployment && resumeDeployment(deployment.id),
     rollback: (reason?: string) => deployment && rollbackDeployment(deployment.id, reason),
     isSimulatingFailure,
   };

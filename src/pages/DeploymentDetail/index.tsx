@@ -15,7 +15,7 @@ import { SimulateFailureBanner } from '../../components/deployments/SimulateFail
 
 export const DeploymentDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
-  const { deployment, promote, pause, rollback, isSimulatingFailure } = useDeployment(
+  const { deployment, promote, pause, resume, rollback, isSimulatingFailure } = useDeployment(
     id || 'dep-checkout-284'
   );
 
@@ -109,6 +109,7 @@ export const DeploymentDetailPage: React.FC = () => {
         deployment={deployment}
         onPromote={promote}
         onPause={pause}
+        onResume={resume}
         onRollback={rollback}
       />
 
