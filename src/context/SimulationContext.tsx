@@ -7,9 +7,9 @@ import { mockDeployments } from '../data/mockDeployments';
 import { mockChanges } from '../data/mockChanges';
 import { mockIncidents } from '../data/mockIncidents';
 import { mockAuditEvents } from '../data/mockAuditEvents';
-import { auditService } from '../services/audit.service';
+
 import { deploymentsService } from '../services/deployments.service';
-import { deploymentAuditAdapter } from '../services/audit.adapter';
+import { policyService } from '../services/policy.service';
 
 export interface AppNotification {
   id: string;
@@ -31,9 +31,9 @@ interface SimulationContextType {
   currentEnvironment: 'PRODUCTION' | 'STAGING' | 'DEVELOPMENT';
   setCurrentEnvironment: (env: 'PRODUCTION' | 'STAGING' | 'DEVELOPMENT') => void;
   isSimulatingFailure: boolean;
-  
+
   // Actions
-  simulateFailure: (deploymentId?: string) => void;
+  simulateFailure: (deploymentId?: string) => Promise<void>;
   promoteDeployment: (deploymentId: string) => Promise<void>;
   pauseDeployment: (deploymentId: string, reason?: string) => Promise<void>;
   resumeDeployment: (deploymentId: string) => Promise<void>;
@@ -125,44 +125,124 @@ export const SimulationProvider: React.FC<{ children: ReactNode }> = ({ children
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));
   };
 
-  const simulateFailure = (deploymentId: string = 'dep-checkout-284') => {
+  const simulateFailure = async (
+    deploymentId: string = 'dep-checkout-284'
+  ): Promise<void> => {
     setIsSimulatingFailure(true);
 
-    // Delegate business logic & persistence to deploymentsService
-    deploymentsService
-      .simulateFailure(deploymentId)
-      .then(updated => {
-        if (updated) {
-          setDeployments(prev => prev.map(d => (d.id === updated.id ? updated : d)));
+    try {
+      // 1. Simulate the failure through Prathamesh's service.
+      const failedDeployment =
+        await deploymentsService.simulateFailure(deploymentId);
+
+      if (!failedDeployment) {
+        throw new Error(`Deployment not found: ${deploymentId}`);
+      }
+
+      setDeployments(prev =>
+        prev.map(dep =>
+          dep.id === failedDeployment.id ? failedDeployment : dep
+        )
+      );
+
+      // 2. Evaluate the generated telemetry using Aarya's policy engine.
+      const telemetry = {
+        deploymentId,
+        errorRate: failedDeployment.currentTelemetry.errorRate,
+        p95Latency: failedDeployment.currentTelemetry.p95Latency,
+        checkoutSuccessRate: 96.8,
+        dbConnectionSaturation: 82,
+      };
+
+      const change = mockChanges.find(c => c.number === 1824);
+
+      if (!change) {
+        throw new Error('Policy evaluation change #1824 was not found.');
+      }
+
+      const policy = policyService.generatePolicy(change);
+      const decision = policyService.evaluateTelemetry(telemetry, policy);
+
+      // 3. Enforce the policy decision through the deployment service.
+      if (decision.decision === 'PAUSE') {
+        const reason =
+          decision.reason ||
+          `Telemetry exceeded deployment safety thresholds. Failed signals: ${decision.failedSignals.join(', ')
+          }`;
+
+        const pausedDeployment =
+          await deploymentsService.pauseDeployment(deploymentId, reason);
+
+        if (!pausedDeployment) {
+          throw new Error(`Could not pause deployment: ${deploymentId}`);
         }
-      })
-      .catch(() => {
-        // Fall back gracefully
+
+        setDeployments(prev =>
+          prev.map(dep =>
+            dep.id === pausedDeployment.id ? pausedDeployment : dep
+          )
+        );
+
+        // 4. Notify the user only after the pause succeeds.
+        addNotification({
+          title: 'ROLLOUT AUTOMATICALLY PAUSED',
+          message:
+            `Policy Engine detected unsafe telemetry. ` +
+            `Error rate: ${telemetry.errorRate}%. ` +
+            `Failed signals: ${decision.failedSignals.join(', ')}.`,
+          type: 'DANGER',
+          link: `/deployments/${deploymentId}`,
+          actionText: 'Investigate & Rollback',
+        });
+
+        // 5. Record the policy decision in the context audit log.
+        const now = new Date();
+
+        const newAuditEvent: AuditEvent = {
+          id: `aud-${Date.now()}`,
+          timestamp: now.toISOString(),
+          timeFormatted: now.toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          }),
+          actor: {
+            name: 'Policy Engine',
+            type: 'POLICY_ENGINE',
+          },
+          action: 'DEPLOYMENT_PAUSED',
+          actionTitle: 'Autonomous Rollout Pause Triggered',
+          resource: {
+            type: 'DEPLOYMENT',
+            id: deploymentId,
+            name: `${pausedDeployment.serviceName} (${pausedDeployment.version})`,
+          },
+          result: 'WARNING',
+          source: 'POLICY_ENGINE',
+          details:
+            `Policy decision: PAUSE. ` +
+            `Error rate: ${telemetry.errorRate}%. ` +
+            `Failed signals: ${decision.failedSignals.join(', ')}. ` +
+            `Reason: ${reason}`,
+        };
+
+        setAuditEvents(prev => [newAuditEvent, ...prev]);
+      }
+    } catch (error) {
+      console.error('Failure simulation failed:', error);
+
+      addNotification({
+        title: 'FAILURE SIMULATION FAILED',
+        message:
+          error instanceof Error
+            ? error.message
+            : 'Could not complete the failure simulation.',
+        type: 'WARNING',
+        link: `/deployments/${deploymentId}`,
       });
-
-    // Add High Priority Notification
-    addNotification({
-      title: 'ROLLOUT AUTOMATICALLY PAUSED',
-      message: 'Checkout API exceeded configured error threshold (3.7% > 1.0%). Traffic held at 42%.',
-      type: 'DANGER',
-      link: `/deployments/${deploymentId}`,
-      actionText: 'Investigate & Rollback',
-    });
-
-    // Record in Audit Log
-    const newAuditEvent: AuditEvent = {
-      id: `aud-${Date.now()}`,
-      timestamp: new Date().toISOString(),
-      timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      actor: { name: 'Policy Engine', type: 'POLICY_ENGINE' },
-      action: 'DEPLOYMENT_PAUSED',
-      actionTitle: 'Autonomous Rollout Pause Triggered',
-      resource: { type: 'DEPLOYMENT', id: deploymentId, name: 'checkout-service (v2.9.0)' },
-      result: 'WARNING',
-      source: 'POLICY_ENGINE',
-      details: 'Error rate jump (0.42% → 3.7%) breached Policy Rule #3 (< 1.0%). Progression paused.',
-    };
-    setAuditEvents(prev => [newAuditEvent, ...prev]);
+    } finally {
+      setIsSimulatingFailure(false);
+    }
   };
 
   const rollbackDeployment = async (deploymentId: string, reason: string = 'Error rate exceeded production threshold') => {

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { deploymentRepository, StateConflictError } from './deployment.repository.ts';
 import { deploymentAuditAdapter, AuditWriterError } from './audit.adapter.ts';
 import { deploymentsService } from './deployments.service.ts';
-import { dispatchDeploymentApi, DeploymentApiController } from '../api/deployment.api.ts';
+import { dispatchDeploymentApi, deploymentApiController } from '../api/deployment.api.ts';
+import { FileStorageDriver } from './file-storage.server.ts';
 
 describe('Phase 4: Real Backend + Deployment APIs + Audit Integration', () => {
   beforeEach(async () => {

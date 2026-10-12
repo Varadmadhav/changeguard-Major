@@ -12,8 +12,14 @@ import {
 } from '../types/deployment.ts';
 import { canaryController } from '../services/canary.controller.ts';
 import { policyReceiver } from '../services/policy.receiver.ts';
-import { deploymentRepository, StateConflictError } from '../services/deployment.repository.ts';
+import {
+  deploymentRepository as defaultRepository,
+  DeploymentRepository,
+  StateConflictError,
+} from '../services/deployment.repository.ts';
 import { deploymentAuditAdapter } from '../services/audit.adapter.ts';
+import { FileStorageDriver } from '../services/file-storage.server.ts';
+import { policyService } from '../services/policy.service.ts';
 
 export interface ApiResponse<T = any> {
   success: boolean;
@@ -30,8 +36,12 @@ export interface ApiResponse<T = any> {
  * Provides pure request handlers compatible with both Node http and Fastify/Express.
  */
 export class DeploymentApiController {
+  constructor(
+    private readonly repository: DeploymentRepository = defaultRepository
+  ) {}
+
   public async getDeployments(): Promise<{ status: number; body: ApiResponse<Deployment[]> }> {
-    const list = await deploymentRepository.findAll();
+    const list = await this.repository.findAll();
     return {
       status: 200,
       body: { success: true, data: list },
@@ -46,7 +56,7 @@ export class DeploymentApiController {
       };
     }
 
-    const deployment = await deploymentRepository.findById(id);
+    const deployment = await this.repository.findById(id);
     if (!deployment) {
       return {
         status: 404,
@@ -64,7 +74,7 @@ export class DeploymentApiController {
     id: string,
     payload?: { targetStage?: number; expectedStatus?: DeploymentStatus; actor?: string }
   ): Promise<{ status: number; body: ApiResponse<Deployment> }> {
-    const deployment = await deploymentRepository.findById(id);
+    const deployment = await this.repository.findById(id);
     if (!deployment) {
       return {
         status: 404,
@@ -84,7 +94,7 @@ export class DeploymentApiController {
       canaryController.promote(deployment, payload?.targetStage);
 
       // 2. Persist with optimistic concurrency check
-      const updated = await deploymentRepository.save(deployment, payload?.expectedStatus);
+      const updated = await this.repository.save(deployment, payload?.expectedStatus);
 
       // 3. Dispatch tamper-evident audit record
       await deploymentAuditAdapter.recordPromotion(
@@ -106,7 +116,7 @@ export class DeploymentApiController {
     id: string,
     payload?: { reason?: string; command?: DeploymentPolicyCommand; expectedStatus?: DeploymentStatus }
   ): Promise<{ status: number; body: ApiResponse<Deployment> }> {
-    const deployment = await deploymentRepository.findById(id);
+    const deployment = await this.repository.findById(id);
     if (!deployment) {
       return {
         status: 404,
@@ -128,20 +138,10 @@ export class DeploymentApiController {
           deployment.health = 'WARNING';
           deployment.pausedReason = reason;
           deployment.updatedAt = 'Just now';
-
-          deployment.timeline.unshift({
-            id: `tl-${Date.now()}`,
-            timestamp: new Date().toISOString(),
-            timeFormatted: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-            title: 'Rollout Paused',
-            description: reason,
-            type: 'WARNING',
-            actor: 'Operator / Policy Engine',
-          });
         }
       }
 
-      const updated = await deploymentRepository.save(deployment, payload?.expectedStatus);
+      const updated = await this.repository.save(deployment, payload?.expectedStatus);
 
       await deploymentAuditAdapter.recordPause(updated, reason);
 
@@ -158,7 +158,7 @@ export class DeploymentApiController {
     id: string,
     payload?: { reason?: string; targetVersion?: string; expectedStatus?: DeploymentStatus; actor?: string }
   ): Promise<{ status: number; body: ApiResponse<Deployment> }> {
-    const deployment = await deploymentRepository.findById(id);
+    const deployment = await this.repository.findById(id);
     if (!deployment) {
       return {
         status: 404,
@@ -212,7 +212,7 @@ export class DeploymentApiController {
         actor: payload?.actor || 'ChangeGuard Rollback Controller',
       });
 
-      const updated = await deploymentRepository.save(deployment, payload?.expectedStatus);
+      const updated = await this.repository.save(deployment, payload?.expectedStatus);
 
       await deploymentAuditAdapter.recordRollback(updated, targetVersion, reason, payload?.actor);
 
@@ -229,38 +229,145 @@ export class DeploymentApiController {
     id: string,
     payload?: { errorRate?: number; p95Latency?: number }
   ): Promise<{ status: number; body: ApiResponse<Deployment> }> {
-    const deployment = await deploymentRepository.findById(id);
+    const deployment = await this.repository.findById(id);
+
     if (!deployment) {
       return {
         status: 404,
-        body: { success: false, error: { code: 'DEPLOYMENT_NOT_FOUND', message: `Deployment '${id}' not found` } },
+        body: {
+          success: false,
+          error: {
+            code: 'DEPLOYMENT_NOT_FOUND',
+            message: `Deployment '${id}' not found`,
+          },
+        },
       };
     }
 
-    const errorRate = payload?.errorRate ?? 3.7;
-    const p95Latency = payload?.p95Latency ?? 840;
+    try {
+      const errorRate = payload?.errorRate ?? 3.7;
+      const p95Latency = payload?.p95Latency ?? 840;
+      const now = new Date();
 
-    deployment.currentTelemetry.errorRate = errorRate;
-    deployment.currentTelemetry.p95Latency = p95Latency;
-    deployment.health = 'CRITICAL';
+      // Ensure arrays exist
+      deployment.timeline ??= [];
+      deployment.signals ??= [];
 
-    deployment.signals = deployment.signals.map((s) => {
-      if (s.metricKey === 'http_error_rate') {
-        return { ...s, currentValue: errorRate, status: 'FAILED' as const };
+      // Update telemetry
+      deployment.currentTelemetry.errorRate = errorRate;
+      deployment.currentTelemetry.p95Latency = p95Latency;
+
+      // Define monitored signals
+      const signalDefinitions = [
+        {
+          metricKey: 'http_error_rate',
+          name: 'HTTP Error Rate',
+          value: errorRate,
+          threshold: 1.0,
+          unit: '%',
+        },
+        {
+          metricKey: 'p95_latency',
+          name: 'P95 Transaction Latency',
+          value: p95Latency,
+          threshold: 500,
+          unit: 'ms',
+        },
+      ];
+
+      const failedSignals: string[] = [];
+
+      // Create or update monitored signals
+      for (const definition of signalDefinitions) {
+        let signal = deployment.signals.find(
+          (item) => item.metricKey === definition.metricKey
+        );
+
+        const status =
+          definition.value >= definition.threshold ? 'FAILED' : 'PASSED';
+
+        if (!signal) {
+          signal = {
+            id: `sig-${definition.metricKey}-${deployment.id}`,
+            name: definition.name,
+            description: `Monitors ${definition.name.toLowerCase()}.`,
+            metricKey: definition.metricKey,
+            operator: '<',
+            threshold: definition.threshold,
+            currentValue: definition.value,
+            unit: definition.unit,
+            status,
+            evaluatedAt: now.toISOString(),
+          };
+
+          deployment.signals.push(signal);
+        } else {
+          signal.currentValue = definition.value;
+          signal.status = status;
+          signal.evaluatedAt = now.toISOString();
+        }
+
+        if (status === 'FAILED') {
+          failedSignals.push(definition.name);
+        }
       }
-      if (s.metricKey === 'p95_latency') {
-        return { ...s, currentValue: p95Latency, status: 'FAILED' as const };
+
+      // Update deployment health
+      deployment.health =
+        failedSignals.length > 0 ? 'CRITICAL' : 'HEALTHY';
+
+      // Record the failure simulation in the timeline
+      deployment.timeline.unshift({
+        id: `event-${Date.now()}`,
+        timestamp: now.toISOString(),
+        timeFormatted: now.toLocaleTimeString([], {
+          hour: '2-digit',
+          minute: '2-digit',
+        }),
+        title: 'Failure Simulation',
+        description:
+          `Simulated HTTP Error Rate: ${errorRate}% and ` +
+          `P95 Latency: ${p95Latency}ms.`,
+        type: 'DANGER',
+        actor: 'SYSTEM',
+      });
+
+      // Automatically pause unsafe deployments
+      if (failedSignals.length > 0 && deployment.status === 'MONITORING') {
+        const reason =
+          `Automatic safety pause: ${failedSignals.join(', ')} ` +
+          'exceeded their thresholds.';
+
+        policyReceiver.handleCommand(deployment, {
+          deploymentId: deployment.id,
+          decision: 'PAUSE',
+          canPromote: false,
+          allowedStages: deployment.stages,
+          failedSignals,
+          reason,
+        });
       }
-      return s;
-    });
 
-    const updated = await deploymentRepository.save(deployment);
-    await deploymentAuditAdapter.recordFailureSimulation(updated, errorRate, p95Latency);
+      // Persist the updated deployment
+      const updated = await this.repository.save(deployment);
 
-    return {
-      status: 200,
-      body: { success: true, data: updated },
-    };
+      // Record the failure simulation in the audit log
+      await deploymentAuditAdapter.recordFailureSimulation(
+        updated,
+        errorRate,
+        p95Latency
+      );
+
+      return {
+        status: 200,
+        body: {
+          success: true,
+          data: updated,
+        },
+      };
+    } catch (err: unknown) {
+      return this.mapErrorToResponse(err);
+    }
   }
 
   private mapErrorToResponse(err: unknown): { status: number; body: ApiResponse } {
@@ -312,12 +419,13 @@ export class DeploymentApiController {
 export const deploymentApiController = new DeploymentApiController();
 
 /**
- * Dispatches an HTTP-like request path and method to the DeploymentApiController
+ * Dispatches an HTTP-like request path and method to the controller
  */
 export async function dispatchDeploymentApi(
   reqOrMethod: string | { method: string; url?: string; urlPath?: string; body?: any },
   urlPathArg?: string,
-  bodyArg?: any
+  bodyArg?: any,
+  controller: DeploymentApiController = deploymentApiController
 ): Promise<{ status: number; statusCode: number; body: ApiResponse }> {
   let method: string;
   let urlPath: string;
@@ -339,7 +447,7 @@ export async function dispatchDeploymentApi(
 
   // Support both /api/deployments and /api/v1/deployments prefixes
   if (method === 'GET' && (normalized === '/api/deployments' || normalized === '/api/v1/deployments')) {
-    result = await deploymentApiController.getDeployments();
+    result = await controller.getDeployments();
     return { ...result, statusCode: result.status };
   }
   // Routes matching /api/deployments/:id(/action) or /api/v1/deployments/:id(/action)
@@ -357,23 +465,23 @@ export async function dispatchDeploymentApi(
   const action = match[2];
 
   if (method === 'GET' && !action) {
-    result = await deploymentApiController.getDeploymentById(id);
+    result = await controller.getDeploymentById(id);
     return { ...result, statusCode: result.status };
   }
 
   if (method === 'POST') {
     switch (action) {
       case 'promote':
-        result = await deploymentApiController.promoteDeployment(id, body);
+        result = await controller.promoteDeployment(id, body);
         return { ...result, statusCode: result.status };
       case 'pause':
-        result = await deploymentApiController.pauseDeployment(id, body);
+        result = await controller.pauseDeployment(id, body);
         return { ...result, statusCode: result.status };
       case 'rollback':
-        result = await deploymentApiController.rollbackDeployment(id, body);
+        result = await controller.rollbackDeployment(id, body);
         return { ...result, statusCode: result.status };
       case 'simulate-failure':
-        result = await deploymentApiController.simulateFailure(id, body);
+        result = await controller.simulateFailure(id, body);
         return { ...result, statusCode: result.status };
       default:
         return {
@@ -395,8 +503,12 @@ export async function dispatchDeploymentApi(
  * Creates a real Node.js HTTP server instance routing deployment requests.
  */
 export function createDeploymentHttpServer(): http.Server {
+  const serverRepository = new DeploymentRepository(
+    new FileStorageDriver()
+  );
+  const serverController = new DeploymentApiController(serverRepository);
+
   const server = http.createServer(async (req, res) => {
-    // Basic CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -408,24 +520,40 @@ export function createDeploymentHttpServer(): http.Server {
     }
 
     let rawBody = '';
+
     req.on('data', (chunk) => {
       rawBody += chunk;
     });
 
     req.on('end', async () => {
       let parsedBody: any = undefined;
+
       if (rawBody.trim()) {
         try {
           parsedBody = JSON.parse(rawBody);
         } catch {
           res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ success: false, error: { code: 'INVALID_JSON', message: 'Malformed JSON payload' } }));
+          res.end(JSON.stringify({
+            success: false,
+            error: {
+              code: 'INVALID_JSON',
+              message: 'Malformed JSON payload'
+            }
+          }));
           return;
         }
       }
 
-      const response = await dispatchDeploymentApi(req.method || 'GET', req.url || '/', parsedBody);
-      res.writeHead(response.status, { 'Content-Type': 'application/json' });
+      const response = await dispatchDeploymentApi(
+        req.method || 'GET',
+        req.url || '/',
+        parsedBody,
+        serverController
+      );
+
+      res.writeHead(response.status, {
+        'Content-Type': 'application/json'
+      });
       res.end(JSON.stringify(response.body));
     });
   });
