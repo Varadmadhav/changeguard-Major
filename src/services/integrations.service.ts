@@ -4,6 +4,23 @@ import { mockIntegrations } from '../data/mockIntegrations';
 class IntegrationsService {
   private integrations: Integration[] = [...mockIntegrations];
 
+<<<<<<< Updated upstream
+=======
+  private isMockMode(): boolean {
+    try {
+      if (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_USE_MOCK_DATA !== undefined) {
+        return (import.meta as any).env.VITE_USE_MOCK_DATA !== 'false';
+      }
+    } catch {
+      // ignore
+    }
+    if (typeof process !== 'undefined' && process.env?.VITE_USE_MOCK_DATA !== undefined) {
+      return process.env.VITE_USE_MOCK_DATA !== 'false';
+    }
+    return true;
+  }
+
+>>>>>>> Stashed changes
   async getIntegrations(): Promise<Integration[]> {
     // Simulates GET /api/integrations
     return Promise.resolve([...this.integrations]);
