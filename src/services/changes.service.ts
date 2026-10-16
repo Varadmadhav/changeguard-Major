@@ -4,23 +4,6 @@ import { mockChanges } from '../data/mockChanges';
 class ChangesService {
   private changes: Change[] = [...mockChanges];
 
-<<<<<<< Updated upstream
-=======
-  private isMockMode(): boolean {
-    try {
-      if (typeof import.meta !== 'undefined' && (import.meta as any).env) {
-        return (import.meta as any).env.VITE_USE_MOCK_DATA !== 'false';
-      }
-    } catch {
-      // not in Vite
-    }
-    if (typeof process !== 'undefined' && process.env?.VITE_USE_MOCK_DATA) {
-      return process.env.VITE_USE_MOCK_DATA !== 'false';
-    }
-    return true;
-  }
-
->>>>>>> Stashed changes
   async getChanges(): Promise<Change[]> {
     // Simulates GET /api/changes
     return Promise.resolve([...this.changes]);

@@ -1,53 +1,8 @@
 import { Deployment } from '../types/deployment';
 import { mockDeployments } from '../data/mockDeployments';
 
-<<<<<<< Updated upstream
 class DeploymentsService {
   private deployments: Deployment[] = [...mockDeployments];
-=======
-export class DeploymentsService {
-  private mode: 'local' | 'api' = 'local';
-  private apiBaseUrl = '/api';
-  private repository: DeploymentRepository;
-  private canary: CanaryController;
-  private policy: PolicyReceiver;
-  private audit: DeploymentAuditAdapter;
-
-  constructor(
-    repository: DeploymentRepository = deploymentRepository,
-    canary: CanaryController = canaryController,
-    policy: PolicyReceiver = policyReceiver,
-    audit: DeploymentAuditAdapter = deploymentAuditAdapter
-  ) {
-    this.repository = repository;
-    this.canary = canary;
-    this.policy = policy;
-    this.audit = audit;
-  }
-
-  public getMode(): 'local' | 'api' {
-    return this.mode;
-  }
-
-  public setMode(mode: 'local' | 'api', baseUrl?: string): void {
-    this.mode = mode;
-    if (baseUrl) this.apiBaseUrl = baseUrl;
-  }
-
-  private isMockMode(): boolean {
-    try {
-      if (typeof import.meta !== 'undefined' && (import.meta as any).env) {
-        return (import.meta as any).env.VITE_USE_MOCK_DATA !== 'false';
-      }
-    } catch {
-      // not in Vite
-    }
-    if (typeof process !== 'undefined' && process.env?.VITE_USE_MOCK_DATA) {
-      return process.env.VITE_USE_MOCK_DATA !== 'false';
-    }
-    return true;
-  }
->>>>>>> Stashed changes
 
   async getDeployments(): Promise<Deployment[]> {
     // Simulates GET /api/deployments

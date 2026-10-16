@@ -1,4 +1,13 @@
-import { ApiErrorPayload } from '../../shared/types/index';
+export interface ApiErrorPayload {
+  message?: string;
+  error?: {
+    message?: string;
+    code?: string;
+    requestId?: string;
+  } | string;
+  statusCode?: number;
+  [key: string]: any;
+}
 
 const getApiBaseUrl = (): string => {
   try {
@@ -70,11 +79,12 @@ class ApiClient {
         // Fallback for non-JSON errors
       }
 
+      const errObj = typeof errorPayload?.error === 'object' && errorPayload.error !== null ? errorPayload.error : null;
       const errorMessage =
-        errorPayload?.error?.message || `HTTP ${response.status}: ${response.statusText}`;
+        errObj?.message || (typeof errorPayload?.error === 'string' ? errorPayload.error : null) || errorPayload?.message || `HTTP ${response.status}: ${response.statusText}`;
       const error = new Error(errorMessage) as Error & { code?: string; requestId?: string; status: number };
-      error.code = errorPayload?.error?.code || 'HTTP_ERROR';
-      error.requestId = errorPayload?.error?.requestId;
+      error.code = errObj?.code || 'HTTP_ERROR';
+      error.requestId = errObj?.requestId;
       error.status = response.status;
       throw error;
     }
