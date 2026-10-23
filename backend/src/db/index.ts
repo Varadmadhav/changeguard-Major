@@ -2097,8 +2097,8 @@ class Database {
       const targetService = this.fullServices.find((s) => s.id === serviceId || s.slug === serviceId);
       if (targetService) {
         const relevantIds = new Set<string>([targetService.id]);
-        targetService.dependencies.forEach((d) => relevantIds.add(d.id));
-        targetService.dependents.forEach((d) => relevantIds.add(d.id));
+        targetService.dependencies.forEach((d: any) => relevantIds.add(d.id));
+        targetService.dependents.forEach((d: any) => relevantIds.add(d.id));
 
         allNodes = allNodes.filter((n) => relevantIds.has(n.id));
         allEdges = allEdges.filter((e) => relevantIds.has(e.source) && relevantIds.has(e.target));
@@ -2160,7 +2160,7 @@ class Database {
     data: any
   ): Promise<OrgSettings> {
     if (!this.settings[section]) {
-      const err = new Error(`Unknown settings section: ${section}`);
+      const err = new Error(`Unknown settings section: ${String(section)}`);
       (err as any).statusCode = 400;
       throw err;
     }
@@ -2170,7 +2170,7 @@ class Database {
       try {
         await getSettingsCollection()?.updateOne(
           { organization_id: orgId },
-          { $set: { [`settings.${section}`]: this.settings[section] } },
+          { $set: { [`settings.${String(section)}`]: this.settings[section] } },
           { upsert: true }
         );
       } catch (err) {
